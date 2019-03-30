@@ -19,140 +19,11 @@
 #include "mariadb.h"
 #include "sql_class.h"
 #include "transaction.h"
-
+#include "xa.h"
 
 /***************************************************************************
   Handling of XA id cacheing
 ***************************************************************************/
-enum xa_states { XA_ACTIVE= 0, XA_IDLE, XA_PREPARED, XA_ROLLBACK_ONLY };
-
-
-struct XID_cache_insert_element
-{
-  enum xa_states xa_state;
-  XID *xid;
-  XID_cache_element *xid_cache_element;
-
-  XID_cache_insert_element(enum xa_states xa_state_arg, XID *xid_arg):
-    xa_state(xa_state_arg), xid(xid_arg) {}
-};
-
-
-class XID_cache_element
-{
-  /*
-    m_state is used to prevent elements from being deleted while XA RECOVER
-    iterates xid cache and to prevent recovered elments from being acquired by
-    multiple threads.
-
-    bits 1..29 are reference counter
-    bit 30 is RECOVERED flag
-    bit 31 is ACQUIRED flag (thread owns this xid)
-    bit 32 is unused
-
-    Newly allocated and deleted elements have m_state set to 0.
-
-    On lock() m_state is atomically incremented. It also creates load-ACQUIRE
-    memory barrier to make sure m_state is actually updated before furhter
-    memory accesses. Attempting to lock an element that has neither ACQUIRED
-    nor RECOVERED flag set returns failure and further accesses to element
-    memory are forbidden.
-
-    On unlock() m_state is decremented. It also creates store-RELEASE memory
-    barrier to make sure m_state is actually updated after preceding memory
-    accesses.
-
-    ACQUIRED flag is set when thread registers it's xid or when thread acquires
-    recovered xid.
-
-    RECOVERED flag is set for elements found during crash recovery.
-
-    ACQUIRED and RECOVERED flags are cleared before element is deleted from
-    hash in a spin loop, after last reference is released.
-  */
-  std::atomic<int32_t> m_state;
-public:
-  static const int32 ACQUIRED= 1 << 30;
-  static const int32 RECOVERED= 1 << 29;
-  /* Error reported by the Resource Manager (RM) to the Transaction Manager. */
-  uint rm_error;
-  enum xa_states xa_state;
-  XID xid;
-  bool is_set(int32_t flag)
-  { return m_state.load(std::memory_order_relaxed) & flag; }
-  void set(int32_t flag)
-  {
-    DBUG_ASSERT(!is_set(ACQUIRED | RECOVERED));
-    m_state.fetch_add(flag, std::memory_order_relaxed);
-  }
-  bool lock()
-  {
-    int32_t old= m_state.fetch_add(1, std::memory_order_acquire);
-    if (old & (ACQUIRED | RECOVERED))
-      return true;
-    unlock();
-    return false;
-  }
-  void unlock()
-  { m_state.fetch_sub(1, std::memory_order_release); }
-  void mark_uninitialized()
-  {
-    int32_t old= ACQUIRED;
-    while (!m_state.compare_exchange_weak(old, 0,
-                                          std::memory_order_relaxed,
-                                          std::memory_order_relaxed))
-    {
-      old&= ACQUIRED | RECOVERED;
-      (void) LF_BACKOFF();
-    }
-  }
-  void acquired_to_recovered()
-  {
-    m_state.fetch_or(RECOVERED, std::memory_order_relaxed);
-    m_state.fetch_and(~ACQUIRED, std::memory_order_release);
-  }
-  bool acquire_recovered()
-  {
-    int32_t old= RECOVERED;
-    while (!m_state.compare_exchange_weak(old, ACQUIRED | RECOVERED,
-                                          std::memory_order_acquire,
-                                          std::memory_order_relaxed))
-    {
-      if (!(old & RECOVERED) || (old & ACQUIRED))
-        return false;
-      old= RECOVERED;
-      (void) LF_BACKOFF();
-    }
-    return true;
-  }
-  static void lf_hash_initializer(LF_HASH *hash __attribute__((unused)),
-                                  XID_cache_element *element,
-                                  XID_cache_insert_element *new_element)
-  {
-    DBUG_ASSERT(!element->is_set(ACQUIRED | RECOVERED));
-    element->rm_error= 0;
-    element->xa_state= new_element->xa_state;
-    element->xid.set(new_element->xid);
-    new_element->xid_cache_element= element;
-  }
-  static void lf_alloc_constructor(uchar *ptr)
-  {
-    XID_cache_element *element= (XID_cache_element*) (ptr + LF_HASH_OVERHEAD);
-    element->m_state= 0;
-  }
-  static void lf_alloc_destructor(uchar *ptr)
-  {
-    DBUG_ASSERT(!reinterpret_cast<XID_cache_element*>(ptr + LF_HASH_OVERHEAD)
-		->is_set(ACQUIRED));
-  }
-  static uchar *key(const XID_cache_element *element, size_t *length,
-                    my_bool not_used __attribute__((unused)))
-  {
-    *length= element->xid.key_length();
-    return element->xid.key();
-  }
-};
-
 
 static LF_HASH xid_cache;
 static bool xid_cache_inited;
@@ -267,6 +138,7 @@ bool xid_cache_insert(XID *xid)
   {
   case 0:
     new_element.xid_cache_element->set(XID_cache_element::RECOVERED);
+    new_element.xid_cache_element->binlogged= true;
     break;
   case 1:
     res= 0;
@@ -308,7 +180,11 @@ static void xid_cache_delete(THD *thd, XID_cache_element *&element)
 
 void xid_cache_delete(THD *thd, XID_STATE *xid_state)
 {
-  DBUG_ASSERT(xid_state->is_explicit_XA());
+  DBUG_ASSERT(xid_state->is_explicit_XA() || thd->lex->xa_opt == XA_ONE_PHASE);
+
+  if (!xid_state->is_explicit_XA())
+    return;
+
   xid_cache_delete(thd, xid_state->xid_cache_element);
   xid_state->xid_cache_element= 0;
 }
@@ -380,17 +256,23 @@ static bool xa_trans_rolled_back(XID_cache_element *element)
   @return TRUE if the rollback failed, FALSE otherwise.
 */
 
-static bool xa_trans_force_rollback(THD *thd)
+bool xa_trans_force_rollback(THD *thd)
 {
   bool rc= false;
+  XID_STATE &xid_state= thd->transaction.xid_state;
+  enum xa_option_words xa_opt_saved= thd->lex->xa_opt;
 
+  if (xid_state.xid_cache_element->xa_state != XA_PREPARED)
+    thd->lex->xa_opt= XA_ONE_PHASE; // to force binlog regular ROLLBACK
   if (ha_rollback_trans(thd, true))
   {
     my_error(ER_XAER_RMERR, MYF(0));
     rc= true;
   }
+  thd->lex->xa_opt= xa_opt_saved;
 
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
+  thd->variables.option_bits&= ~OPTION_GTID_BEGIN;
   thd->transaction.all.reset();
   thd->server_status&=
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
@@ -490,6 +372,8 @@ bool trans_xa_end(THD *thd)
 
 bool trans_xa_prepare(THD *thd)
 {
+  int res= 1;
+
   DBUG_ENTER("trans_xa_prepare");
 
   if (!thd->transaction.xid_state.is_explicit_XA() ||
@@ -497,16 +381,40 @@ bool trans_xa_prepare(THD *thd)
     thd->transaction.xid_state.er_xaer_rmfail();
   else if (!thd->transaction.xid_state.xid_cache_element->xid.eq(thd->lex->xid))
     my_error(ER_XAER_NOTA, MYF(0));
-  else if (ha_prepare(thd))
-  {
-    xid_cache_delete(thd, &thd->transaction.xid_state);
-    my_error(ER_XA_RBROLLBACK, MYF(0));
-  }
   else
-    thd->transaction.xid_state.xid_cache_element->xa_state= XA_PREPARED;
+  {
+    /*
+      Acquire metadata lock which will ensure that COMMIT is blocked
+      by active FLUSH TABLES WITH READ LOCK (and vice versa COMMIT in
+      progress blocks FTWRL).
 
-  DBUG_RETURN(thd->is_error() ||
-    thd->transaction.xid_state.xid_cache_element->xa_state != XA_PREPARED);
+      We allow FLUSHer to COMMIT; we assume FLUSHer knows what it does.
+    */
+    MDL_request mdl_request;
+    mdl_request.init(MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
+                     MDL_STATEMENT);
+    if (thd->mdl_context.acquire_lock(&mdl_request,
+                                      thd->variables.lock_wait_timeout) ||
+        ha_prepare(thd))
+    {
+      if (!mdl_request.ticket)
+        ha_rollback_trans(thd, TRUE);
+      thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
+      thd->transaction.all.reset();
+      thd->server_status&=
+        ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
+      xid_cache_delete(thd, &thd->transaction.xid_state);
+      my_error(ER_XA_RBROLLBACK, MYF(0));
+    }
+    else
+    {
+      thd->transaction.xid_state.xid_cache_element->xa_state= XA_PREPARED;
+      res= thd->variables.pseudo_slave_mode || thd->slave_thread ?
+        slave_applier_reset_xa_trans(thd) : 0;
+    }
+  }
+
+  DBUG_RETURN(res);
 }
 
 
@@ -521,11 +429,13 @@ bool trans_xa_prepare(THD *thd)
 
 bool trans_xa_commit(THD *thd)
 {
-  bool res= TRUE;
+  bool res= true;
+  XID_STATE &xid_state= thd->transaction.xid_state;
+
   DBUG_ENTER("trans_xa_commit");
 
-  if (!thd->transaction.xid_state.is_explicit_XA() ||
-      !thd->transaction.xid_state.xid_cache_element->xid.eq(thd->lex->xid))
+  if (!xid_state.is_explicit_XA() ||
+      !xid_state.xid_cache_element->xid.eq(thd->lex->xid))
   {
     if (thd->fix_xid_hash_pins())
     {
@@ -535,28 +445,67 @@ bool trans_xa_commit(THD *thd)
 
     if (auto xs= xid_cache_search(thd, thd->lex->xid))
     {
-      res= xa_trans_rolled_back(xs);
-      ha_commit_or_rollback_by_xid(thd->lex->xid, !res);
-      xid_cache_delete(thd, xs);
+      if (thd->in_multi_stmt_transaction_mode())
+      {
+        xid_state.er_xaer_rmfail();
+      }
+      else
+      {
+        res= xa_trans_rolled_back(xs);
+        /*
+          Acquire metadata lock which will ensure that COMMIT is blocked
+          by active FLUSH TABLES WITH READ LOCK (and vice versa COMMIT in
+          progress blocks FTWRL).
+
+          We allow FLUSHer to COMMIT; we assume FLUSHer knows what it does.
+        */
+        MDL_request mdl_request;
+        mdl_request.init(MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
+                         MDL_STATEMENT);
+        if (thd->mdl_context.acquire_lock(&mdl_request,
+                                          thd->variables.lock_wait_timeout))
+        {
+          /*
+            We can't rollback an XA transaction on lock failure due to
+            Innodb redo log and bin log update is involved in rollback.
+            Return error to user for a retry.
+          */
+          xid_state.er_xaer_rmfail();
+          DBUG_RETURN(res);
+        }
+        DBUG_ASSERT(!xid_state.xid_cache_element);
+
+        DEBUG_SYNC(thd, "at_trans_xa_commit");
+        if ((res= thd->wait_for_prior_commit()))
+          DBUG_RETURN(res);
+
+        xid_state.xid_cache_element= xs;
+        ha_commit_or_rollback_by_xid(thd->lex->xid, !res);
+        xid_state.xid_cache_element= 0;
+
+        res= res || thd->is_error();
+        xid_cache_delete(thd, xs);
+      }
     }
     else
       my_error(ER_XAER_NOTA, MYF(0));
     DBUG_RETURN(res);
   }
 
-  if (xa_trans_rolled_back(thd->transaction.xid_state.xid_cache_element))
+  if (xa_trans_rolled_back(xid_state.xid_cache_element))
   {
     xa_trans_force_rollback(thd);
     DBUG_RETURN(thd->is_error());
   }
-  else if (thd->transaction.xid_state.xid_cache_element->xa_state == XA_IDLE &&
+  else if (xid_state.xid_cache_element->xa_state == XA_IDLE &&
            thd->lex->xa_opt == XA_ONE_PHASE)
   {
+    xid_cache_delete(thd, &xid_state);
     int r= ha_commit_trans(thd, TRUE);
     if ((res= MY_TEST(r)))
       my_error(r == 1 ? ER_XA_RBROLLBACK : ER_XAER_RMERR, MYF(0));
   }
-  else if (thd->transaction.xid_state.xid_cache_element->xa_state == XA_PREPARED &&
+  else if (xid_state.xid_cache_element->xa_state == XA_PREPARED &&
            thd->lex->xa_opt == XA_NONE)
   {
     MDL_request mdl_request;
@@ -569,26 +518,30 @@ bool trans_xa_commit(THD *thd)
       We allow FLUSHer to COMMIT; we assume FLUSHer knows what it does.
     */
     mdl_request.init(MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
-                     MDL_TRANSACTION);
+                     MDL_STATEMENT);
 
     if (thd->mdl_context.acquire_lock(&mdl_request,
                                       thd->variables.lock_wait_timeout))
     {
-      ha_rollback_trans(thd, TRUE);
+      /*
+        We can't rollback an XA transaction on lock failure due to
+        Innodb redo log and bin log update is involved in rollback.
+        Return error to user for a retry.
+      */
       my_error(ER_XAER_RMERR, MYF(0));
+      DBUG_RETURN(true);
     }
     else
     {
       DEBUG_SYNC(thd, "trans_xa_commit_after_acquire_commit_lock");
 
-      res= MY_TEST(ha_commit_one_phase(thd, 1));
-      if (res)
+      if ((res= MY_TEST(ha_commit_one_phase(thd, 1))))
         my_error(ER_XAER_RMERR, MYF(0));
     }
   }
   else
   {
-    thd->transaction.xid_state.er_xaer_rmfail();
+    xid_state.er_xaer_rmfail();
     DBUG_RETURN(TRUE);
   }
 
@@ -597,7 +550,7 @@ bool trans_xa_commit(THD *thd)
   thd->server_status&=
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
   DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
-  xid_cache_delete(thd, &thd->transaction.xid_state);
+  xid_cache_delete(thd, &xid_state);
 
   trans_track_end_trx(thd);
 
@@ -616,10 +569,13 @@ bool trans_xa_commit(THD *thd)
 
 bool trans_xa_rollback(THD *thd)
 {
+  bool res= false;
+  XID_STATE &xid_state= thd->transaction.xid_state;
+
   DBUG_ENTER("trans_xa_rollback");
 
-  if (!thd->transaction.xid_state.is_explicit_XA() ||
-      !thd->transaction.xid_state.xid_cache_element->xid.eq(thd->lex->xid))
+  if (!xid_state.is_explicit_XA() ||
+      !xid_state.xid_cache_element->xid.eq(thd->lex->xid))
   {
     if (thd->fix_xid_hash_pins())
     {
@@ -629,8 +585,30 @@ bool trans_xa_rollback(THD *thd)
 
     if (auto xs= xid_cache_search(thd, thd->lex->xid))
     {
+      MDL_request mdl_request;
+      mdl_request.init(MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
+                       MDL_STATEMENT);
+      if (thd->mdl_context.acquire_lock(&mdl_request,
+                                        thd->variables.lock_wait_timeout))
+      {
+        /*
+          We can't rollback an XA transaction on lock failure due to
+          Innodb redo log and bin log update is involved in rollback.
+          Return error to user for a retry.
+        */
+        xid_state.er_xaer_rmfail();
+        DBUG_RETURN(true);
+      }
       xa_trans_rolled_back(xs);
+      DBUG_ASSERT(!xid_state.xid_cache_element);
+
+      DEBUG_SYNC(thd, "at_trans_xa_rollback");
+      if ((res= thd->wait_for_prior_commit()))
+        DBUG_RETURN(res);
+
+      xid_state.xid_cache_element= xs;
       ha_commit_or_rollback_by_xid(thd->lex->xid, 0);
+      xid_state.xid_cache_element= 0;
       xid_cache_delete(thd, xs);
     }
     else
@@ -638,21 +616,35 @@ bool trans_xa_rollback(THD *thd)
     DBUG_RETURN(thd->get_stmt_da()->is_error());
   }
 
-  if (thd->transaction.xid_state.xid_cache_element->xa_state == XA_ACTIVE)
+  if (xid_state.xid_cache_element->xa_state == XA_ACTIVE)
   {
-    thd->transaction.xid_state.er_xaer_rmfail();
+    xid_state.er_xaer_rmfail();
     DBUG_RETURN(TRUE);
   }
-  DBUG_RETURN(xa_trans_force_rollback(thd));
+
+  MDL_request mdl_request;
+  mdl_request.init(MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
+      MDL_STATEMENT);
+  if (thd->mdl_context.acquire_lock(&mdl_request,
+        thd->variables.lock_wait_timeout))
+  {
+    /*
+      We can't rollback an XA transaction on lock failure due to
+      Innodb redo log and bin log update is involved in rollback.
+      Return error to user for a retry.
+    */
+    my_error(ER_XAER_RMERR, MYF(0));
+    DBUG_RETURN(true);
+  }
+
+  DBUG_RETURN(res != 0 || xa_trans_force_rollback(thd));
 }
 
 
 bool trans_xa_detach(THD *thd)
 {
   DBUG_ASSERT(thd->transaction.xid_state.is_explicit_XA());
-#if 1
-  return xa_trans_force_rollback(thd);
-#else
+
   if (thd->transaction.xid_state.xid_cache_element->xa_state != XA_PREPARED)
     return xa_trans_force_rollback(thd);
   thd->transaction.xid_state.xid_cache_element->acquired_to_recovered();
@@ -671,7 +663,6 @@ bool trans_xa_detach(THD *thd)
   thd->transaction.all.ha_list= 0;
   thd->transaction.all.no_2pc= 0;
   return false;
-#endif
 }
 
 
@@ -864,4 +855,37 @@ bool mysql_xa_recover(THD *thd)
     DBUG_RETURN(1);
   my_eof(thd);
   DBUG_RETURN(0);
+}
+
+
+/**
+  This is a specific to (pseudo-) slave applier collection of standard cleanup
+  actions to reset XA transaction state sim to @c ha_commit_one_phase.
+  THD of the slave applier is dissociated from a transaction object in engine
+  that continues to exist there.
+
+  @param  THD current thread
+  @return the value of is_error()
+*/
+
+bool slave_applier_reset_xa_trans(THD *thd)
+{
+  thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_KEEP_LOG);
+  thd->server_status&=
+    ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
+  DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
+
+  thd->transaction.xid_state.xid_cache_element->acquired_to_recovered();
+  thd->transaction.xid_state.xid_cache_element= 0;
+
+  ha_close_connection(thd);
+  thd->transaction.cleanup();
+  thd->transaction.all.reset();
+
+  DBUG_ASSERT(!thd->transaction.all.ha_list);
+  DBUG_ASSERT(!thd->transaction.all.no_2pc);
+
+  thd->has_waiter= false;
+
+  return thd->is_error();
 }

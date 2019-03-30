@@ -4227,7 +4227,7 @@ inline void update_state_of_relay_log(Relay_log_info *rli, Log_event *ev)
         rli->clear_flag(Relay_log_info::IN_TRANSACTION);
     }
   }
-  if (typ == XID_EVENT)
+  if (typ == XID_EVENT || typ == XA_PREPARE_LOG_EVENT)
     rli->clear_flag(Relay_log_info::IN_TRANSACTION);
   if (typ == GTID_EVENT &&
       !(((Gtid_log_event*) ev)->flags2 & Gtid_log_event::FL_STANDALONE))
@@ -5431,7 +5431,6 @@ pthread_handler_t handle_slave_sql(void *arg)
     But the master timestamp is reset by RESET SLAVE & CHANGE MASTER.
   */
   rli->clear_error();
-  rli->parallel.reset();
 
   //tell the I/O thread to take relay_log_space_limit into account from now on
   rli->ignore_log_space_limit= 0;
@@ -5598,7 +5597,9 @@ pthread_handler_t handle_slave_sql(void *arg)
   }
 #endif /* WITH_WSREP */
   /* Read queries from the IO/THREAD until this thread is killed */
-
+  if (rli->parallel.reset(mi->using_parallel()))
+    rli->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR, NULL,
+                "Error initializing parallel mode");
   thd->set_command(COM_SLAVE_SQL);
   while (!sql_slave_killed(serial_rgi))
   {
@@ -5660,7 +5661,7 @@ pthread_handler_t handle_slave_sql(void *arg)
 
  err:
   if (mi->using_parallel())
-    rli->parallel.wait_for_done(thd, rli);
+    rli->parallel.leave(thd, rli);
 
   /* Thread stopped. Print the current replication position to the log */
   {
@@ -7092,6 +7093,7 @@ static int queue_event(Master_info* mi,const char* buf, ulong event_len)
                                       buf[EVENT_TYPE_OFFSET])) ||
         (!mi->last_queued_gtid_standalone &&
          ((uchar)buf[EVENT_TYPE_OFFSET] == XID_EVENT ||
+          (uchar)buf[EVENT_TYPE_OFFSET] == XA_PREPARE_LOG_EVENT ||
           ((uchar)buf[EVENT_TYPE_OFFSET] == QUERY_EVENT &&    /* QUERY_COMPRESSED_EVENT would never be commmit or rollback */
            Query_log_event::peek_is_commit_rollback(buf, event_len,
                                                     checksum_alg))))))

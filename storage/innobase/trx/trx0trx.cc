@@ -553,6 +553,7 @@ void trx_disconnect_prepared(trx_t *trx)
   trx->mysql_thd= NULL;
   /* todo/fixme: suggest to do it at innodb prepare */
   trx->will_lock= 0;
+  trx_sys.rw_trx_hash.put_pins(trx);
 }
 
 /****************************************************************//**
@@ -1407,8 +1408,21 @@ trx_commit_in_memory(
 			trx->release_locks();
 		}
 
-		DEBUG_SYNC_C("after_trx_committed_in_memory");
-
+#ifndef DBUG_OFF
+                const bool debug_sync = trx->mysql_thd &&
+                                        trx->has_logged_persistent();
+		/* In case of this function is called from a stack executing
+		    THD::free_connection -> ...
+		   innobase_connection_close() ->
+		   trx_rollback_for_mysql... -> .
+		 mysql's thd does not seem to have
+		 thd->debug_sync_control defined any longer. However the stack
+		 is possible only with a prepared trx not updating any data.
+		 */
+		 if (debug_sync) {
+		   DEBUG_SYNC_C("after_trx_committed_in_memory");
+		 }
+#endif
 		if (trx->read_only || !trx->rsegs.m_redo.rseg) {
 			MONITOR_INC(MONITOR_TRX_RO_COMMIT);
 		} else {

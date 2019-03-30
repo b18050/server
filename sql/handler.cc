@@ -1275,14 +1275,16 @@ int ha_prepare(THD *thd)
 {
   int error=0, all=1;
   THD_TRANS *trans=all ? &thd->transaction.all : &thd->transaction.stmt;
-  Ha_trx_info *ha_info= trans->ha_list;
+  Ha_trx_info *ha_info= trans->ha_list, *ha_info_next;
   DBUG_ENTER("ha_prepare");
 
   if (ha_info)
   {
-    for (; ha_info; ha_info= ha_info->next())
+    for (; ha_info; ha_info= ha_info_next)
     {
       handlerton *ht= ha_info->ht();
+      ha_info_next= ha_info->next();
+
       if (ht->prepare)
       {
         if (unlikely(prepare_or_error(ht, thd, all)))
@@ -1291,6 +1293,11 @@ int ha_prepare(THD *thd)
           error=1;
           break;
         }
+
+        DBUG_ASSERT(thd->transaction.xid_state.is_explicit_XA());
+
+        if (thd->variables.pseudo_slave_mode || thd->slave_thread)
+          ha_info->reset();
       }
       else
       {
@@ -1300,6 +1307,19 @@ int ha_prepare(THD *thd)
                             ha_resolve_storage_engine_name(ht));
 
       }
+    }
+    if (thd->variables.pseudo_slave_mode || thd->slave_thread)
+    {
+      trans->ha_list= 0;
+      trans->no_2pc=0;
+    }
+
+    DEBUG_SYNC(thd, "at_unlog_xa_prepare");
+
+    if (tc_log->unlog_xa_prepare(thd, all))
+    {
+      ha_rollback_trans(thd, all);
+      error=1;
     }
   }
 
@@ -1854,7 +1874,8 @@ int ha_rollback_trans(THD *thd, bool all)
       rollback without signalling following transactions. And in release
       builds, we explicitly do the signalling before rolling back.
     */
-    DBUG_ASSERT(!(thd->rgi_slave && thd->rgi_slave->did_mark_start_commit));
+    DBUG_ASSERT(!(thd->rgi_slave && thd->rgi_slave->did_mark_start_commit) ||
+                thd->transaction.xid_state.is_explicit_XA());
     if (thd->rgi_slave && thd->rgi_slave->did_mark_start_commit)
       thd->rgi_slave->unmark_start_commit();
   }
