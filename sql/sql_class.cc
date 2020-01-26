@@ -3395,7 +3395,7 @@ int select_export::send_data(List<Item> &items)
 	     pos++)
 	{
 #ifdef USE_MB
-	  if (use_mb(res_charset))
+	  if (res_charset->use_mb())
 	  {
 	    int l;
 	    if ((l=my_ismbchar(res_charset, pos, end)))

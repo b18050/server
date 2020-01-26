@@ -4059,7 +4059,7 @@ rec_field_len_in_chars(
 		return SIZE_T_MAX;
 	}
 
-	return(cs->cset->numchars(cs, rec_field, rec_field + rec_field_len));
+	return cs->numchars(rec_field, rec_field + rec_field_len);
 }
 
 /** Avoid the clustered index lookup if all the following conditions

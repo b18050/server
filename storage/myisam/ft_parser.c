@@ -122,7 +122,7 @@ uchar ft_get_word(CHARSET_INFO *cs, const uchar **start, const uchar *end,
   {
     for (; doc < end; doc+= (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1)))
     {
-      mbl= cs->cset->ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
+      mbl= my_ci_ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
       if (true_word_char(ctype, *doc))
         break;
       if (*doc == FTB_RQUOT && param->quot)
@@ -161,7 +161,7 @@ uchar ft_get_word(CHARSET_INFO *cs, const uchar **start, const uchar *end,
     for (word->pos= doc; doc < end; length++,
          doc+= (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1)))
     {
-      mbl= cs->cset->ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
+      mbl= my_ci_ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
       if (true_word_char(ctype, *doc))
         mwc=0;
       else if (!misc_word_char(*doc) || mwc)
@@ -214,7 +214,7 @@ uchar ft_simple_get_word(CHARSET_INFO *cs, uchar **start, const uchar *end,
     {
       if (doc >= end)
         DBUG_RETURN(0);
-      mbl= cs->cset->ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
+      mbl= my_ci_ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
       if (true_word_char(ctype, *doc))
         break;
     }
@@ -223,7 +223,7 @@ uchar ft_simple_get_word(CHARSET_INFO *cs, uchar **start, const uchar *end,
     for (word->pos= doc; doc < end; length++,
          doc+= (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1)))
     {
-      mbl= cs->cset->ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
+      mbl= my_ci_ctype(cs, &ctype, (uchar*)doc, (uchar*)end);
       if (true_word_char(ctype, *doc))
         mwc= 0;
       else if (!misc_word_char(*doc) || mwc)

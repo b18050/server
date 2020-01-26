@@ -38,7 +38,8 @@
     const char *acc_end= (ACC) + (LEN);                                 \
     for (ptr_str= (STR) ; ptr_str < (END) ; ptr_str+= mbl)              \
     {                                                                   \
-      mbl= my_charlen_fix((CS), ptr_str, (END));                        \
+      mbl= my_ci_charlen_fix((CS), (const uchar *) ptr_str,             \
+                                   (const uchar *) (END));              \
       if (mbl < 2)                                                      \
       {                                                                 \
         DBUG_ASSERT(mbl == 1);                                          \

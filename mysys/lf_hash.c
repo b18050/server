@@ -313,7 +313,7 @@ static inline my_hash_value_type calc_hash(CHARSET_INFO *cs,
                                            size_t keylen)
 {
   ulong nr1= 1, nr2= 4;
-  cs->coll->hash_sort(cs, (uchar*) key, keylen, &nr1, &nr2);
+  my_ci_hash_sort(cs, (uchar*) key, keylen, &nr1, &nr2);
   return nr1;
 }
 

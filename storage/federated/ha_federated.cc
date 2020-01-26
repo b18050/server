@@ -560,7 +560,7 @@ static bool append_ident(String *string, const char *name, size_t length,
     for (name_end= name+length; name < name_end; name+= clen)
     {
       uchar c= *(uchar *) name;
-      clen= my_charlen_fix(system_charset_info, name, name_end);
+      clen= system_charset_info->charlen_fix(name, name_end);
       if (clen == 1 && c == (uchar) quote_char &&
           (result= string->append(&quote_char, 1, system_charset_info)))
         goto err;

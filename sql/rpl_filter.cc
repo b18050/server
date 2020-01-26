@@ -595,10 +595,10 @@ Rpl_filter::find_wild(DYNAMIC_ARRAY *a, const char* key, int len)
   {
     TABLE_RULE_ENT* e ;
     get_dynamic(a, (uchar*)&e, i);
-    if (!my_wildcmp(system_charset_info, key, key_end, 
-		    (const char*)e->db,
-		    (const char*)(e->db + e->key_len),
-		    '\\',wild_one,wild_many))
+    if (!system_charset_info->wildcmp(key, key_end, 
+                                      (const char*)e->db,
+                                      (const char*)(e->db + e->key_len),
+                                      '\\', wild_one, wild_many))
       return e;
   }
   

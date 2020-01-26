@@ -103,8 +103,8 @@ ulong Events::inited;
 int sortcmp_lex_string(const LEX_CSTRING *s, const LEX_CSTRING *t,
                        const CHARSET_INFO *cs)
 {
- return cs->coll->strnncollsp(cs, (uchar *) s->str, s->length,
-                                  (uchar *) t->str, t->length);
+ return cs->strnncollsp(s->str, s->length,
+                        t->str, t->length);
 }
 
 

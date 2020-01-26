@@ -633,7 +633,7 @@ static void configure_instr_class(PFS_instr_class *entry)
 
       Consecutive wildcards affect the count.
     */
-    if (!my_wildcmp(&my_charset_latin1,
+    if (!my_charset_latin1.wildcmp(
                     entry->m_name, entry->m_name+entry->m_name_length,
                     e->m_name, e->m_name+e->m_name_length,
                     '\\', '?','%'))

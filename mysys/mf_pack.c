@@ -152,7 +152,7 @@ size_t cleanup_dirname(register char *to, const char *from)
   {
 #ifdef BACKSLASH_MBTAIL
     uint l;
-    if (use_mb(fs) && (l= my_ismbchar(fs, from_ptr - 1, from_ptr + 2)))
+    if (my_ci_use_mb(fs) && (l= my_ismbchar(fs, from_ptr - 1, from_ptr + 2)))
     {
       for (l-- ; l ; *++pos= *from_ptr++, l--);
       start= pos + 1; /* Don't look inside multi-byte char */

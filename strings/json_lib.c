@@ -1510,8 +1510,7 @@ int json_append_ascii(CHARSET_INFO *json_cs,
   while (ascii < ascii_end)
   {
     int c_len;
-    if ((c_len= json_cs->cset->wc_mb(json_cs, (my_wc_t) *ascii,
-                                     json, json_end)) > 0)
+    if ((c_len= my_ci_wc_mb(json_cs, (my_wc_t) *ascii, json, json_end)) > 0)
     {
       json+= c_len;
       ascii++;
@@ -1537,7 +1536,7 @@ int json_unescape(CHARSET_INFO *json_cs,
   while (json_read_string_const_chr(&s) == 0)
   {
     int c_len;
-    if ((c_len= res_cs->cset->wc_mb(res_cs, s.c_next, res, res_end)) > 0)
+    if ((c_len= my_ci_wc_mb(res_cs, s.c_next, res, res_end)) > 0)
     {
       res+= c_len;
       continue;
@@ -1548,7 +1547,7 @@ int json_unescape(CHARSET_INFO *json_cs,
         Result charset doesn't support the json's character.
         Let's replace it with the '?' symbol.
       */
-      if ((c_len= res_cs->cset->wc_mb(res_cs, '?', res, res_end)) > 0)
+      if ((c_len= my_ci_wc_mb(res_cs, '?', res, res_end)) > 0)
       {
         res+= c_len;
         continue;
@@ -1607,14 +1606,14 @@ int json_escape(CHARSET_INFO *str_cs,
   {
     my_wc_t c_chr;
     int c_len;
-    if ((c_len= str_cs->cset->mb_wc(str_cs, &c_chr, str, str_end)) > 0)
+    if ((c_len= my_ci_mb_wc(str_cs, &c_chr, str, str_end)) > 0)
     {
       enum json_esc_char_classes c_class;
       
       str+= c_len;
       if (c_chr >= 0x60 || (c_class= json_escape_chr_map[c_chr]) == ESC_)
       {
-        if ((c_len= json_cs->cset->wc_mb(json_cs, c_chr, json, json_end)) > 0)
+        if ((c_len= my_ci_wc_mb(json_cs, c_chr, json, json_end)) > 0)
         {
           json+= c_len;
           continue;
@@ -1629,9 +1628,8 @@ int json_escape(CHARSET_INFO *str_cs,
         c_class= ESC_U;
       }
 
-      if ((c_len= json_cs->cset->wc_mb(json_cs, '\\', json, json_end)) <= 0 ||
-          (c_len= json_cs->cset->wc_mb(json_cs,
-                                       (c_class == ESC_BS) ? c_chr : c_class,
+      if ((c_len= my_ci_wc_mb(json_cs, '\\', json, json_end)) <= 0 ||
+          (c_len= my_ci_wc_mb(json_cs, (c_class == ESC_BS) ? c_chr : c_class,
                                        json+= c_len, json_end)) <= 0)
       {
         /* JSON buffer is depleted. */

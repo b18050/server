@@ -4170,7 +4170,7 @@ bool hostname_requires_resolving(const char *hostname)
 
   if (hostname == my_localhost ||
       (hostname_len == localhost_len &&
-       !my_strnncoll(system_charset_info,
+       !system_charset_info->strnncoll(
                      (const uchar *) hostname,  hostname_len,
                      (const uchar *) my_localhost, strlen(my_localhost))))
   {
@@ -12765,7 +12765,7 @@ static bool find_mpvio_user(MPVIO_EXT *mpvio)
     */
     ulong nr1=1, nr2=4;
     CHARSET_INFO *cs= &my_charset_latin1;
-    cs->coll->hash_sort(cs, (uchar*) sctx->user, strlen(sctx->user), &nr1, &nr2);
+    cs->hash_sort((uchar*) sctx->user, strlen(sctx->user), &nr1, &nr2);
 
     mysql_mutex_lock(&acl_cache->lock);
     if (!acl_users.elements)

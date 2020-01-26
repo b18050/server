@@ -4533,8 +4533,8 @@ fts_get_token_size(
 		int	ctype;
 		int	mbl;
 
-		mbl = cs->cset->ctype(
-			cs, &ctype,
+		mbl = cs->ctype(
+			&ctype,
 			reinterpret_cast<uchar*>(start),
 			reinterpret_cast<uchar*>(end));
 

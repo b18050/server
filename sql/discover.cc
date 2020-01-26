@@ -206,12 +206,12 @@ int extension_based_table_discovery(MY_DIR *dirp, const char *ext_meta,
       size_t len= (octothorp ? octothorp : ext) - cur->name;
       if (from != cur &&
           (strlen(from->name) <= len ||
-           my_strnncoll(cs, (uchar*)from->name, len, (uchar*)cur->name, len) ||
+           cs->strnncoll(from->name, len, cur->name, len) ||
            (from->name[len] != FN_EXTCHAR && from->name[len] != '#')))
         advance(from, to, cur, skip);
 
-      if (my_strnncoll(cs, (uchar*)ext, strlen(ext),
-                           (uchar*)ext_meta, ext_meta_len) == 0)
+      if (cs->strnncoll(ext, strlen(ext),
+                        ext_meta, ext_meta_len) == 0)
       {
         *ext = 0;
         if (result->add_file(cur->name))
@@ -255,8 +255,8 @@ int ext_table_discovery_simple(MY_DIR *dirp,
 
     if (ext)
     {
-      if (my_strnncoll(cs, (uchar*)ext, strlen(ext),
-                           (uchar*)reg_ext, reg_ext_length) == 0)
+      if (cs->strnncoll(ext, strlen(ext),
+                        reg_ext, reg_ext_length) == 0)
       {
         *ext = 0;
         if (result->add_file(cur->name))

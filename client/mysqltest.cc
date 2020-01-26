@@ -6733,14 +6733,14 @@ int read_line()
     if (!skip_char)
     {
       *p++= c;
-      if (use_mb(charset_info))
+      if (charset_info->use_mb())
       {
         const char *mb_start= p - 1;
         /* Could be a multibyte character */
         /* See a similar code in "sql_load.cc" */
         for ( ; p < buf_end; )
         {
-          int charlen= my_charlen(charset_info, mb_start, p);
+          int charlen= charset_info->charlen(mb_start, p);
           if (charlen > 0)
             break; /* Full character */
           if (MY_CS_IS_TOOSMALL(charlen))

@@ -2574,15 +2574,15 @@ public:
     char *end_not_used;
     String *res;
     res= val_str(&str_value);
-    return res ? my_strntod(res->charset(),(char*) res->ptr(), 
-                            res->length(), &end_not_used, &err_not_used) : 0.0;
+    return res ? res->charset()->strntod((char*) res->ptr(), res->length(),
+                                         &end_not_used, &err_not_used) : 0.0;
   }
   longlong val_int()
   {
     int err_not_used;
     String *res;  res=val_str(&str_value);
-    return res ? my_strntoll(res->charset(),res->ptr(),res->length(),10,
-                             (char**) 0, &err_not_used) : (longlong) 0;
+    return res ? res->charset()->strntoll(res->ptr(),res->length(),10,
+                                          (char**) 0, &err_not_used) : (longlong) 0;
   }
   my_decimal *val_decimal(my_decimal *dec_buf)
   {

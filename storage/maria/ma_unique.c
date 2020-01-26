@@ -145,9 +145,9 @@ ha_checksum _ma_unique_hash(MARIA_UNIQUEDEF *def, const uchar *record)
     if (type == HA_KEYTYPE_TEXT || type == HA_KEYTYPE_VARTEXT1 ||
         type == HA_KEYTYPE_VARTEXT2)
     {
-      keyseg->charset->coll->hash_sort(keyseg->charset,
-                                       (const uchar*) pos, length, &seed1,
-                                       &seed2);
+      my_ci_hash_sort(keyseg->charset,
+                      (const uchar*) pos, length,
+                      &seed1, &seed2);
       crc+= seed1;
     }
     else

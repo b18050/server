@@ -613,7 +613,7 @@ my_strnxfrm_tis620(CHARSET_INFO *cs,
   if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && len < dstlen0)
   {
     size_t fill_length= dstlen0 - len;
-    cs->cset->fill(cs, (char*) dst + len, fill_length, cs->pad_char);
+    my_ci_fill(cs, (char*) dst + len, fill_length, cs->pad_char);
     len= dstlen0;
   }
   return len;

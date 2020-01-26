@@ -8850,11 +8850,10 @@ bool is_secure_file_path(char *path)
   }
   else
   {
-    if (files_charset_info->coll->strnncoll(files_charset_info,
-                                            (uchar *) buff2, strlen(buff2),
-                                            (uchar *) opt_secure_file_priv,
-                                            opt_secure_file_priv_len,
-                                            TRUE))
+    if (files_charset_info->strnncoll(buff2, strlen(buff2),
+                                      opt_secure_file_priv,
+                                      opt_secure_file_priv_len,
+                                      TRUE))
       return FALSE;
   }
   return TRUE;

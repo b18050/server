@@ -27,7 +27,9 @@
 #define FIX_LENGTH(cs, pos, length, char_length)                            \
             do {                                                            \
               if (length > char_length)                                     \
-                char_length= my_charpos(cs, pos, pos+length, char_length);  \
+                char_length= my_ci_charpos(cs, (const char *) pos,          \
+                                               (const char *) pos+length,   \
+                                               char_length);                \
               set_if_smaller(char_length,length);                           \
             } while(0)
 
@@ -109,7 +111,7 @@ uint _mi_make_key(register MI_INFO *info, uint keynr, uchar *key,
     {
       if (type != HA_KEYTYPE_NUM)
       {
-        length= cs->cset->lengthsp(cs, (char*) pos, length);
+        length= my_ci_lengthsp(cs, (char*) pos, length);
       }
       else
       {
@@ -183,7 +185,7 @@ uint _mi_make_key(register MI_INFO *info, uint keynr, uchar *key,
     FIX_LENGTH(cs, pos, length, char_length);
     memcpy((uchar*) key, pos, char_length);
     if (length > char_length)
-      cs->cset->fill(cs, (char*) key+char_length, length-char_length, ' ');
+      my_ci_fill(cs, (char*) key+char_length, length-char_length, ' ');
     key+= length;
   }
   _mi_dpointer(info,key,filepos);
@@ -261,7 +263,7 @@ uint _mi_pack_key(register MI_INFO *info, uint keynr, uchar *key, uchar *old,
       }
       else if (type != HA_KEYTYPE_BINARY)
       {
-        length= cs->cset->lengthsp(cs, (char*) pos, length);
+        length= my_ci_lengthsp(cs, (char*) pos, length);
       }
       FIX_LENGTH(cs, pos, length, char_length);
       store_key_length_inc(key,char_length);
@@ -292,7 +294,7 @@ uint _mi_pack_key(register MI_INFO *info, uint keynr, uchar *key, uchar *old,
     FIX_LENGTH(cs, pos, length, char_length);
     memcpy((uchar*) key, pos, char_length);
     if (length > char_length)
-      cs->cset->fill(cs, (char*) key+char_length, length-char_length, ' ');
+      my_ci_fill(cs, (char*) key+char_length, length-char_length, ' ');
     key+= length;
   }
   if (last_used_keyseg)
@@ -380,8 +382,7 @@ static int _mi_put_key_in_record(register MI_INFO *info, uint keynr,
       if (keyseg->type != (int) HA_KEYTYPE_NUM)
       {
         memcpy(pos,key,(size_t) length);
-        keyseg->charset->cset->fill(keyseg->charset,
-                                    (char*) pos + length,
+        my_ci_fill(keyseg->charset, (char*) pos + length,
                                     keyseg->length - length,
                                     ' ');
       }

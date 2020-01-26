@@ -91,7 +91,7 @@ fts_get_word(
 	while (doc < end) {
 		for (; doc < end;
 		     doc += (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1))) {
-			mbl = cs->cset->ctype(cs, &ctype, doc, end);
+			mbl = cs->ctype(&ctype, doc, end);
 
 			if (true_word_char(ctype, *doc)) {
 				break;
@@ -153,7 +153,7 @@ fts_get_word(
 		for (word->pos = doc;
 		     doc < end;
 		     length++, doc += (mbl > 0 ? mbl : (mbl < 0 ? -mbl : 1))) {
-			mbl = cs->cset->ctype(cs, &ctype, doc, end);
+			mbl = cs->ctype(&ctype, doc, end);
 
 			if (true_word_char(ctype, *doc)) {
 				mwc = 0;

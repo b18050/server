@@ -2773,11 +2773,10 @@ public:
       default: return "UNKNOWN";
     }
   }
-  int sortcmp(const String *s, const String *t) const
+  int sortcmp(const Binary_string *s, const Binary_string *t) const
   {
-    return collation->coll->strnncollsp(collation,
-                                        (uchar *) s->ptr(), s->length(),
-                                        (uchar *) t->ptr(), t->length());
+    return collation->strnncollsp(s->ptr(), s->length(),
+                                  t->ptr(), t->length());
   }
 };
 
@@ -3130,9 +3129,8 @@ public:
   const LEX_CSTRING &lex_cstring() const { return *this; }
   bool eq(const LEX_CSTRING &other) const
   {
-    return !my_strnncoll(system_charset_info,
-                         (const uchar *) LEX_CSTRING::str, LEX_CSTRING::length,
-                         (const uchar *) other.str, other.length);
+    return !system_charset_info->strnncoll(LEX_CSTRING::str, LEX_CSTRING::length,
+                                           other.str, other.length);
   }
 };
 

@@ -1283,9 +1283,8 @@ Sp_handler::sp_create_routine(THD *thd, const sp_head *sp) const
       goto done;
     }
 
-    if (system_charset_info->cset->numchars(system_charset_info,
-                                            sp->m_name.str,
-                                            sp->m_name.str+sp->m_name.length) >
+    if (system_charset_info->numchars(sp->m_name.str,
+                                      sp->m_name.str + sp->m_name.length) >
         table->field[MYSQL_PROC_FIELD_NAME]->char_length())
     {
       my_error(ER_TOO_LONG_IDENT, MYF(0), sp->m_name.str);

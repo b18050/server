@@ -855,8 +855,7 @@ static char *debug_sync_token(char **token_p, uint *token_length_p,
   DBUG_ASSERT(ptr);
 
   /* Skip leading space */
-  ptr+= system_charset_info->cset->scan(system_charset_info,
-                                        ptr, ptrend, MY_SEQ_SPACES);
+  ptr+= system_charset_info->scan(ptr, ptrend, MY_SEQ_SPACES);
   if (!*ptr)
   {
     ptr= NULL;
@@ -867,8 +866,7 @@ static char *debug_sync_token(char **token_p, uint *token_length_p,
   *token_p= ptr;
 
   /* Find token end. */
-  ptr+= system_charset_info->cset->scan(system_charset_info,
-                                        ptr, ptrend, MY_SEQ_NONSPACES);
+  ptr+= system_charset_info->scan(ptr, ptrend, MY_SEQ_NONSPACES);
 
   /* Get token length. */
   *token_length_p= (uint)(ptr - *token_p);
@@ -878,7 +876,7 @@ static char *debug_sync_token(char **token_p, uint *token_length_p,
   {
     DBUG_ASSERT(ptr < ptrend);
     /* Get terminator character length. */
-    uint mbspacelen= my_charlen_fix(system_charset_info, ptr, ptrend);
+    uint mbspacelen= system_charset_info->charlen_fix(ptr, ptrend);
 
     /* Terminate token. */
     *ptr= '\0';
@@ -887,8 +885,7 @@ static char *debug_sync_token(char **token_p, uint *token_length_p,
     ptr+= mbspacelen;
 
     /* Skip trailing space */
-    ptr+= system_charset_info->cset->scan(system_charset_info,
-                                          ptr, ptrend, MY_SEQ_SPACES);
+    ptr+= system_charset_info->scan(ptr, ptrend, MY_SEQ_SPACES);
   }
 
  end:

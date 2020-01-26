@@ -260,9 +260,8 @@ public:
   }
   bool eq_name(const LEX_CSTRING *str) const
   {
-    return my_strnncoll(system_charset_info,
-                        (const uchar *) name.str, name.length,
-                        (const uchar *) str->str, str->length) == 0;
+    return system_charset_info->strnncoll(name.str, name.length,
+                                          str->str, str->length) == 0;
   }
 };
 

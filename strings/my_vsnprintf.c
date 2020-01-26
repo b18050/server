@@ -167,7 +167,7 @@ static char *backtick_string(CHARSET_INFO *cs, char *to, const char *end,
   for ( ; par < par_end; par+= char_len)
   {
     uchar c= *(uchar *) par;
-    char_len= my_charlen_fix(cs, par, par_end);
+    char_len= my_ci_charlen_fix(cs, (const uchar *) par, (const uchar *) par_end);
     if (char_len == 1 && c == (uchar) quote_char )
     {
       if (start + 1 >= end)

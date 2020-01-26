@@ -10133,10 +10133,10 @@ int path_starts_from_data_home_dir(const char *path)
 
     if (lower_case_file_system)
     {
-      if (!my_strnncoll(default_charset_info, (const uchar*) path,
-                        mysql_unpacked_real_data_home_len,
-                        (const uchar*) mysql_unpacked_real_data_home,
-                        mysql_unpacked_real_data_home_len))
+      if (!default_charset_info->strnncoll(path,
+                                           mysql_unpacked_real_data_home_len,
+                                           mysql_unpacked_real_data_home,
+                                           mysql_unpacked_real_data_home_len))
       {
         DBUG_PRINT("error", ("Path is part of mysql_real_data_home"));
         DBUG_RETURN(1);

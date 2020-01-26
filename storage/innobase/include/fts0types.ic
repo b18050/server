@@ -185,12 +185,12 @@ fts_select_index_by_hash(
 	char_len = my_mbcharlen_ptr(cs, reinterpret_cast<const char*>(str),
 				    reinterpret_cast<const char*>(str + len));
 	*/
-	size_t char_len = size_t(cs->cset->charlen(cs, str, str + len));
+	size_t char_len = size_t(cs->charlen(str, str + len));
 
 	ut_ad(char_len <= len);
 
 	/* Get collation hash code */
-	cs->coll->hash_sort(cs, str, char_len, &nr1, &nr2);
+	my_ci_hash_sort(cs, str, char_len, &nr1, &nr2);
 
 	return(nr1 % FTS_NUM_AUX_INDEX);
 }

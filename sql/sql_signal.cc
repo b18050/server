@@ -104,7 +104,7 @@ static bool assign_fixed_string(MEM_ROOT *mem_root,
   src_cs= src->charset();
   src_len= src->length();
   src_end= src_str + src_len;
-  numchars= src_cs->cset->numchars(src_cs, src_str, src_end);
+  numchars= src_cs->numchars(src_str, src_end);
 
   if (numchars <= max_char)
   {
@@ -114,7 +114,7 @@ static bool assign_fixed_string(MEM_ROOT *mem_root,
   else
   {
     numchars= max_char;
-    to_copy= dst_cs->cset->charpos(dst_cs, src_str, src_end, numchars);
+    to_copy= dst_cs->charpos(src_str, src_end, numchars);
     truncated= true;
   }
 

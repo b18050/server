@@ -208,9 +208,8 @@ sp_variable *sp_pcontext::find_variable(const LEX_CSTRING *name,
   {
     sp_variable *p= m_vars.at(i);
 
-    if (my_strnncoll(system_charset_info,
-		     (const uchar *)name->str, name->length,
-		     (const uchar *)p->name.str, p->name.length) == 0)
+    if (system_charset_info->strnncoll(name->str, name->length,
+		                       p->name.str, p->name.length) == 0)
     {
       return p;
     }
@@ -624,9 +623,8 @@ const sp_pcursor *sp_pcontext::find_cursor(const LEX_CSTRING *name,
   {
     LEX_CSTRING n= m_cursors.at(i);
 
-    if (my_strnncoll(system_charset_info,
-		     (const uchar *) name->str, name->length,
-		     (const uchar *) n.str, n.length) == 0)
+    if (system_charset_info->strnncoll(name->str, name->length,
+		                       n.str, n.length) == 0)
     {
       *poff= m_cursor_offset + i;
       return &m_cursors.at(i);
