@@ -242,10 +242,9 @@ next:
                           block.page.zip.ssize) &&
             !srv_force_recovery)
           goto corrupted_or_next;
-        if ((UNIV_UNLIKELY(rlen > 1) || UNIV_UNLIKELY(rlen && *l != 1)) &&
-            !srv_force_recovery)
+        if (UNIV_UNLIKELY(rlen != 1 || *l > 1))
           goto corrupted_or_next;
-        page_create_low(&block, rlen == 0);
+        page_create_low(&block, *l != 0);
         goto next_after_applying;
       case WRITE:
       case MEMSET:
@@ -1585,7 +1584,7 @@ same_page:
 #endif
         break;
       case INIT_INDEX_PAGE:
-        if (rlen > 1)
+        if (rlen != 1)
           goto record_corrupted;
         break;
       case WRITE:

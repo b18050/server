@@ -475,9 +475,9 @@ struct mtr_t {
   @param id      page identifier */
   inline void free(const page_id_t id);
   /** Partly initialize a B-tree page.
-  @param id       page identifier
+  @param block    B-tree page
   @param comp     false=ROW_FORMAT=REDUNDANT, true=COMPACT or DYNAMIC */
-  inline void page_create(const page_id_t id, bool comp);
+  inline void page_create(const buf_block_t &block, bool comp);
 
   /** Write a log record about a file operation.
   @param type           file operation

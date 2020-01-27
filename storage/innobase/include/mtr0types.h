@@ -124,23 +124,26 @@ records to a separate file, not interleaved with page-level redo log
 at all. We could reserve the file ib_logfile0 for checkpoint information
 and for file-level redo log records.)
 
-For FREE_PAGE, INIT_PAGE or INDEX_INIT_PAGE, if same_page=0, the record
-will be treated as corrupted (or reserved for future extension).
-The type code must be followed by 1+1 to 5+5 bytes (to encode the tablespace
-identifier and page number). If the record length does not match the
-encoded lengths of the tablespace identifier and page number, the
-record will be treated as corrupted.  This allows future expansion of
-the format.
+For FREE_PAGE or INIT_PAGE, if same_page=1, the record will be treated
+as corrupted (or reserved for future extension).  The type code must
+be followed by 1+1 to 5+5 bytes (to encode the tablespace identifier
+and page number). If the record length does not match the encoded
+lengths of the tablespace identifier and page number, the record will
+be treated as corrupted. This allows future expansion of the format.
 
 If there is a FREE_PAGE record in a mini-transaction, it must be the
 only record for that page in the mini-transaction. If there is an
 INIT_PAGE record for a page in a mini-transaction, it must be the
 first record for that page in the mini-transaction.
 
+An INIT_INDEX_PAGE must be followed by 1+1 to 5+5 bytes for the page
+identifier (unless the same_page flag is set) and a subtype code:
+0 for ROW_FORMAT=REDUNDANT and 1 for ROW_FORMAT=COMPACT or DYNAMIC.
+
 For WRITE, MEMSET, MEMMOVE, the next 1 to 3 bytes are the byte offset
 on the page, relative from the previous offset. If same_page=0, the
 "previous offset" is 0. If same_page=1, the "previous offset" is where
-the previous operation ended (0 for INIT_PAGE or INDEX_INIT_PAGE).
+the previous operation ended (FIL_PAGE_TYPE for INIT_PAGE or INIT_INDEX_PAGE).
 0xxxxxxx                                     for 0 to 127
 10xxxxxx xxxxxxxx                            for 128 to 16,511
 110xxxxx xxxxxxxx xxxxxxxx                   for 16,512 to 2,113,663
@@ -206,16 +209,13 @@ enum mrec_type_t
   overwritten with zeros, or discarded or trimmed. */
   FREE_PAGE = 0,
   /** Zero-initialize a page. The current byte offset (for subsequent
-  records) will be reset to 26 (right after FIL_PAGE_TYPE).
-  Optionally followed by FIL_PAGE_TYPE (2 bytes). By default,
-  FIL_PAGE_TYPE will be initialized to FIL_PAGE_TYPE_FSP_HDR (8). */
+  records) will be reset to FIL_PAGE_TYPE. */
   INIT_PAGE = 0x10,
   /** Like INIT_PAGE, but initializing a B-tree or R-tree index page,
   including writing the "infimum" and "supremum" pseudo-records. The
-  current byte offset will be reset to 26 (after FIL_PAGE_TYPE). The
-  type code may be followed by a subtype byte to specify the page type.
-  By default, FIL_TYPE_INDEX (B-tree page) in ROW_FORMAT=COMPACT or
-  DYNAMIC will be initialized. */
+  current byte offset will be reset to FIL_PAGE_TYPE. The
+  type code is followed by a subtype byte to specify the ROW_FORMAT:
+  0 for ROW_FORMAT=REDUNDANT, 1 for ROW_FORMAT=COMPACT or DYNAMIC. */
   INIT_INDEX_PAGE = 0x20,
   /** Write a string of bytes. Followed by the byte offset (unsigned,
   relative to the current byte offset, encoded in 1 to 3 bytes) and

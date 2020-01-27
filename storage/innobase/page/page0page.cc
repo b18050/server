@@ -324,11 +324,11 @@ void page_create_low(const buf_block_t* block, bool comp)
 @param[in,out]	block	buffer block
 @param[in,out]	mtr	mini-transaction
 @param[in]	comp	set unless ROW_FORMAT=REDUNDANT */
-void page_create(buf_block_t* block, mtr_t* mtr, bool comp)
+void page_create(buf_block_t *block, mtr_t *mtr, bool comp)
 {
-	mtr->page_create(block->page.id, comp);
-	buf_block_modify_clock_inc(block);
-	page_create_low(block, comp);
+  mtr->page_create(*block, comp);
+  buf_block_modify_clock_inc(block);
+  page_create_low(block, comp);
 }
 
 /**********************************************************//**

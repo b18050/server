@@ -456,15 +456,14 @@ inline void mtr_t::free(const page_id_t id)
 }
 
 /** Partly initialize a B-tree page.
-@param id       page identifier
+@param block    B-tree page
 @param comp     false=ROW_FORMAT=REDUNDANT, true=COMPACT or DYNAMIC */
-inline void mtr_t::page_create(const page_id_t id, bool comp)
+inline void mtr_t::page_create(const buf_block_t &block, bool comp)
 {
   set_modified();
   if (m_log_mode != MTR_LOG_ALL)
     return;
-  byte *l= log_write<INIT_INDEX_PAGE>(id, comp ? 0 : 1, true);
-  if (!comp)
-    *l++= 1;
+  byte *l= log_write<INIT_INDEX_PAGE>(block.page.id, 1, true);
+  *l++= comp;
   m_log.close(l);
 }

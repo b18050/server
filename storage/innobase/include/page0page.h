@@ -918,7 +918,7 @@ page_get_instant(const page_t* page);
 @param[in,out]	block	buffer block
 @param[in,out]	mtr	mini-transaction
 @param[in]	comp	set unless ROW_FORMAT=REDUNDANT */
-void page_create(buf_block_t* block, mtr_t* mtr, bool comp);
+void page_create(buf_block_t *block, mtr_t *mtr, bool comp);
 /**********************************************************//**
 Create a compressed B-tree index page. */
 void
