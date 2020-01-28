@@ -610,6 +610,7 @@ given at all. */
 #define HA_CREATE_USED_SEQUENCE           (1UL << 25)
 
 typedef ulonglong alter_table_operations;
+typedef bool Log_func(THD*, TABLE*, bool, const uchar*, const uchar*);
 
 /*
   These flags are set by the parser and describes the type of
@@ -3134,6 +3135,12 @@ public:
   virtual void rebind_psi();
 
   bool set_top_table_fields;
+
+  /* If we have row logging enabled for this table */
+  bool row_logging, row_logging_init;
+  /* If the row logging should be done in transaction cache */
+  bool row_logging_has_trans;
+
   struct TABLE *top_table;
   Field **top_table_field;
   uint top_table_fields;
@@ -3154,7 +3161,6 @@ private:
 
   /** Stores next_insert_id for handling duplicate key errors. */
   ulonglong m_prev_insert_id;
-
 
 public:
   handler(handlerton *ht_arg, TABLE_SHARE *share_arg)
@@ -3178,8 +3184,9 @@ public:
     pushed_rowid_filter(NULL),
     rowid_filter_is_active(0),
     auto_inc_intervals_count(0),
-    m_psi(NULL), set_top_table_fields(FALSE), top_table(0),
-    top_table_field(0), top_table_fields(0),
+    m_psi(NULL), set_top_table_fields(FALSE),
+    row_logging(0), row_logging_init(0),
+    top_table(0), top_table_field(0), top_table_fields(0),
     m_lock_type(F_UNLCK), ha_share(NULL), m_prev_insert_id(0)
   {
     DBUG_PRINT("info",
@@ -4537,13 +4544,17 @@ protected:
   virtual int delete_table(const char *name);
 
 public:
-  bool check_table_binlog_row_based(bool binlog_row);
+  bool check_table_binlog_row_based();
+  bool prepare_for_row_logging();
   int prepare_for_insert();
+  int binlog_log_row(TABLE *table,
+                     const uchar *before_record,
+                     const uchar *after_record,
+                     Log_func *log_func);
 
   inline void clear_cached_table_binlog_row_based_flag()
   {
     check_table_binlog_row_based_done= 0;
-    check_table_binlog_row_based_result= 0;
   }
 private:
   /* Cache result to avoid extra calls */
@@ -4558,7 +4569,7 @@ private:
 
 private:
   void mark_trx_read_write_internal();
-  bool check_table_binlog_row_based_internal(bool binlog_row);
+  bool check_table_binlog_row_based_internal();
 
 protected:
   /*
@@ -5055,12 +5066,6 @@ inline const LEX_CSTRING *table_case_name(HA_CREATE_INFO *info, const LEX_CSTRIN
   return ((lower_case_table_names == 2 && info->alias.str) ? &info->alias : name);
 }
 
-typedef bool Log_func(THD*, TABLE*, bool, const uchar*, const uchar*);
-int binlog_log_row(TABLE* table,
-                   const uchar *before_record,
-                   const uchar *after_record,
-                   Log_func *log_func);
-
 #define TABLE_IO_WAIT(TRACKER, PSI, OP, INDEX, FLAGS, PAYLOAD) \
   { \
     Exec_time_tracker *this_tracker; \
@@ -5072,7 +5077,6 @@ int binlog_log_row(TABLE* table,
     if (unlikely(this_tracker)) \
       tracker->stop_tracking(table->in_use); \
   }
-int binlog_write_table_map(THD *thd, TABLE *table, bool with_annotate);
 void print_keydup_error(TABLE *table, KEY *key, const char *msg, myf errflag);
 void print_keydup_error(TABLE *table, KEY *key, myf errflag);
 

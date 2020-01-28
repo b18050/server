@@ -7478,6 +7478,7 @@ void THD::reset_for_next_command(bool do_clear_error)
   DBUG_ENTER("THD::reset_for_next_command");
   DBUG_ASSERT(!spcont); /* not for substatements of routines */
   DBUG_ASSERT(!in_sub_stmt);
+  DBUG_ASSERT(binlog_table_maps == 0);
 
   if (likely(do_clear_error))
   {
