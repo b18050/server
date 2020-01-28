@@ -1835,6 +1835,7 @@ inline void mtr_t::log_file_op(mfile_type_t type,
   set_modified();
   if (m_log_mode != MTR_LOG_ALL)
     return;
+  m_last= nullptr;
 
   const size_t len= strlen(path);
   const size_t new_len= type == FILE_RENAME ? 1 + strlen(new_path) : 0;

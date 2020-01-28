@@ -200,7 +200,7 @@ inline bool mtr_t::write(const buf_block_t &block, void *ptr, V val)
     p--;
   }
   ::memcpy(ptr, buf, l);
-  memcpy_low(block.page.id, static_cast<uint16_t>
+  memcpy_low(block.page, static_cast<uint16_t>
              (ut_align_offset(p, srv_page_size)), p, end - p);
   return true;
 }
@@ -219,10 +219,11 @@ inline void mtr_t::memset(const buf_block_t &b, ulint ofs, ulint len, byte val)
 
   static_assert(MIN_4BYTE > UNIV_PAGE_SIZE_MAX, "consistency");
   size_t lenlen= (len < MIN_2BYTE ? 1 + 1 : len < MIN_3BYTE ? 2 + 1 : 3 + 1);
-  byte *l= log_write<MEMSET>(b.page.id, lenlen, true, ofs);
+  byte *l= log_write<MEMSET>(b.page.id, &b.page, lenlen, true, ofs);
   l= mlog_encode_varint(l, len);
   *l++= val;
   m_log.close(l);
+  m_last_offset= static_cast<uint16_t>(ofs + len);
 }
 
 /** Initialize a string of bytes.
@@ -248,7 +249,7 @@ inline void mtr_t::memcpy(const buf_block_t &b, ulint offset, ulint len)
   ut_ad(len);
   ut_ad(offset <= ulint(srv_page_size));
   ut_ad(offset + len <= ulint(srv_page_size));
-  memcpy_low(b.page.id, uint16_t(offset), &b.frame[offset], len);
+  memcpy_low(b.page, uint16_t(offset), &b.frame[offset], len);
 }
 
 /** Log a write of a byte string to a page.
@@ -256,7 +257,7 @@ inline void mtr_t::memcpy(const buf_block_t &b, ulint offset, ulint len)
 @param offset  byte offset within page
 @param data    data to be written
 @param len     length of the data, in bytes */
-inline void mtr_t::memcpy_low(const page_id_t id, uint16_t offset,
+inline void mtr_t::memcpy_low(const buf_page_t &bpage, uint16_t offset,
                               const void *data, size_t len)
 {
   ut_ad(len);
@@ -265,15 +266,16 @@ inline void mtr_t::memcpy_low(const page_id_t id, uint16_t offset,
     return;
   if (len < mtr_buf_t::MAX_DATA_SIZE - (1 + 3 + 3 + 5 + 5))
   {
-    byte *end= log_write<WRITE>(id, len, true, offset);
+    byte *end= log_write<WRITE>(bpage.id, &bpage, len, true, offset);
     ::memcpy(end, data, len);
     m_log.close(end + len);
   }
   else
   {
-    m_log.close(log_write<WRITE>(id, len, false, offset));
+    m_log.close(log_write<WRITE>(bpage.id, &bpage, len, false, offset));
     m_log.push(static_cast<const byte*>(data), static_cast<uint32_t>(len));
   }
+  m_last_offset= static_cast<uint16_t>(offset + len);
 }
 
 /** Log that a string of bytes was copied from the same page.
@@ -306,27 +308,30 @@ inline void mtr_t::memmove(const buf_block_t &b, ulint d, ulint s, ulint len)
   /* The source offset 0 is not possible. */
   s-= 1 << 1;
   size_t slen= (s < MIN_2BYTE ? 1 : s < MIN_3BYTE ? 2 : 3);
-  byte *l= log_write<MEMMOVE>(b.page.id, lenlen + slen, true, d);
+  byte *l= log_write<MEMMOVE>(b.page.id, &b.page, lenlen + slen, true, d);
   l= mlog_encode_varint(l, len);
   l= mlog_encode_varint(l, s);
   m_log.close(l);
+  m_last_offset= static_cast<uint16_t>(d + len);
 }
 
 /**
 Write a log record.
 @tparam type   redo log record type
 @param id     persistent page identifier
+@param bpage  buffer pool page, or nullptr
 @param len    number of additional bytes to write
 @param alloc  whether to allocate the additional bytes
 @param offset byte offset, or 0 if the record type does not allow one
 @return end of mini-transaction log, minus len */
 template<byte type>
-inline byte *mtr_t::log_write(const page_id_t id, size_t len, bool alloc,
-                              size_t offset)
+inline byte *mtr_t::log_write(const page_id_t id, const buf_page_t *bpage,
+                              size_t len, bool alloc, size_t offset)
 {
   static_assert(!(type & 15) && type != RESERVED && type != OPTION &&
                 type <= FILE_CHECKPOINT, "invalid type");
   ut_ad(type >= FILE_CREATE || is_named_space(id.space()));
+  ut_ad(!bpage || bpage->id == id);
   constexpr bool have_len= type != INIT_PAGE && type != FREE_PAGE;
   constexpr bool have_offset= type == WRITE || type == MEMSET ||
     type == MEMMOVE;
@@ -342,18 +347,30 @@ inline byte *mtr_t::log_write(const page_id_t id, size_t len, bool alloc,
   size_t max_len;
   if (!have_len)
     max_len= 1 + 5 + 5;
-  else if (have_offset)
-    max_len= 1 + 3 + 5 + 5 + 3;
-  else
-    max_len= 1 + 3 + 5 + 5;
-
-  byte *const log_ptr= m_log.open(alloc ? max_len + len : max_len);
-#if 1 // MDEV-12353 FIXME: check for same_page
-  byte *end= mlog_encode_varint(log_ptr + 1, id.space());
-  end= mlog_encode_varint(end, id.page_no());
-#endif
-  if (!have_len)
+  else if (!have_offset)
+#if 1 // MDEV-12353 FIXME: enable this
+    max_len= m_last == bpage
+      ? 1 + 3
+      : 1 + 3 + 5 + 5;
+  else if (m_last == bpage && m_last_offset <= offset)
   {
+    /* Encode the offset relative from m_last_offset. */
+    offset-= m_last_offset;
+    max_len= 1 + 3 + 3;
+  }
+#else
+    max_len= 1 + 3 + 5 + 5;
+#endif
+  else
+    max_len= 1 + 3 + 5 + 5 + 3;
+  byte *const log_ptr= m_log.open(alloc ? max_len + len : max_len);
+  byte *end= log_ptr + 1;
+  const byte same_page= max_len < 1 + 5 + 5 ? 0x80 : 0;
+  if (!same_page)
+  {
+    end= mlog_encode_varint(end, id.space());
+    end= mlog_encode_varint(end, id.page_no());
+    m_last= bpage;
   }
   if (have_offset)
   {
@@ -366,10 +383,13 @@ inline byte *mtr_t::log_write(const page_id_t id, size_t len, bool alloc,
       else if (len >= MIN_2BYTE)
         len++;
 
-      *log_ptr= type;
+      *log_ptr= type | same_page;
       end= mlog_encode_varint(log_ptr + 1, len);
-      end= mlog_encode_varint(end, id.space());
-      end= mlog_encode_varint(end, id.page_no());
+      if (!same_page)
+      {
+        end= mlog_encode_varint(end, id.space());
+        end= mlog_encode_varint(end, id.page_no());
+      }
       end= mlog_encode_varint(end, offset);
       return end;
     }
@@ -384,18 +404,22 @@ inline byte *mtr_t::log_write(const page_id_t id, size_t len, bool alloc,
     else if (len >= MIN_2BYTE)
       len++;
 
-    *log_ptr= type;
+    end= log_ptr;
+    *end++= type | same_page;
+    mlog_encode_varint(end, len);
 
-    end= mlog_encode_varint(log_ptr + 1, len);
-    end= mlog_encode_varint(end, id.space());
-    end= mlog_encode_varint(end, id.page_no());
+    if (!same_page)
+    {
+      end= mlog_encode_varint(end, id.space());
+      end= mlog_encode_varint(end, id.page_no());
+    }
     return end;
   }
 
-  ut_ad(end + len > &log_ptr[1]);
+  ut_ad(end + len >= &log_ptr[1] + !same_page);
   ut_ad(end + len <= &log_ptr[16]);
-  ut_ad(end + len <= &log_ptr[max_len]);
-  *log_ptr= type | static_cast<byte>(end + len - log_ptr - 1);
+  ut_ad(end <= &log_ptr[max_len]);
+  *log_ptr= type | same_page | static_cast<byte>(end + len - log_ptr - 1);
   ut_ad(*log_ptr & 15);
   return end;
 }
@@ -443,7 +467,8 @@ inline void mtr_t::init(buf_block_t *b)
     return;
   }
 
-  m_log.close(log_write<INIT_PAGE>(b->page.id));
+  m_log.close(log_write<INIT_PAGE>(b->page.id, &b->page));
+  m_last_offset= FIL_PAGE_TYPE;
   b->page.init_on_flush= true;
 }
 
@@ -452,7 +477,7 @@ inline void mtr_t::init(buf_block_t *b)
 inline void mtr_t::free(const page_id_t id)
 {
   if (m_log_mode == MTR_LOG_ALL)
-    m_log.close(log_write<FREE_PAGE>(id));
+    m_log.close(log_write<FREE_PAGE>(id, nullptr));
 }
 
 /** Partly initialize a B-tree page.
@@ -463,7 +488,8 @@ inline void mtr_t::page_create(const buf_block_t &block, bool comp)
   set_modified();
   if (m_log_mode != MTR_LOG_ALL)
     return;
-  byte *l= log_write<INIT_INDEX_PAGE>(block.page.id, 1, true);
+  byte *l= log_write<INIT_INDEX_PAGE>(block.page.id, &block.page, 1, true);
   *l++= comp;
   m_log.close(l);
+  m_last_offset= FIL_PAGE_TYPE;
 }

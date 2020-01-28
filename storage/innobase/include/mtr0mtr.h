@@ -491,23 +491,24 @@ struct mtr_t {
 
 private:
   /** Log a write of a byte string to a page.
-  @param id      page identifier
+  @param b       buffer page
   @param offset  byte offset within page
   @param data    data to be written
   @param len     length of the data, in bytes */
-  inline void memcpy_low(const page_id_t id, uint16_t offset,
+  inline void memcpy_low(const buf_page_t &bpage, uint16_t offset,
                          const void *data, size_t len);
   /**
   Write a log record.
   @tparam type  redo log record type
   @param id     persistent page identifier
+  @param bpage  buffer pool page, or nullptr
   @param len    number of additional bytes to write
   @param alloc  whether to allocate the additional bytes
   @param offset byte offset, or 0 if the record type does not allow one
   @return end of mini-transaction log, minus len */
   template<byte type>
-  inline byte *log_write(const page_id_t id, size_t len= 0, bool alloc= false,
-                         size_t offset= 0);
+  inline byte *log_write(const page_id_t id, const buf_page_t *bpage,
+                         size_t len= 0, bool alloc= false, size_t offset= 0);
 
   /** Prepare to write the mini-transaction log to the redo log buffer.
   @return number of bytes to write in finish_write() */
@@ -533,6 +534,11 @@ private:
   /** whether commit() has been called */
   bool m_commit= false;
 #endif
+
+  /** The page of the most recent m_log record written, or NULL */
+  const buf_page_t* m_last;
+  /** The current byte offset in m_last, or 0 */
+  uint16_t m_last_offset;
 
 	/** memo stack for locks etc. */
 	mtr_buf_t	m_memo;

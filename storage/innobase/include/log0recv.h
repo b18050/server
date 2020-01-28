@@ -166,13 +166,17 @@ struct page_recv_t
     /** log records are being applied on the page */
     RECV_BEING_PROCESSED
   } state= RECV_NOT_PROCESSED;
+  /** Latest written byte offset when applying the log records.
+  @see mtr_t::m_last_offset */
+  uint16_t last_offset= 1;
   /** log records for a page */
   class recs_t
   {
     /** The first log record */
-    log_rec_t *head= NULL;
+    log_rec_t *head= nullptr;
     /** The last log record */
-    log_rec_t *tail= NULL;
+    log_rec_t *tail= nullptr;
+    friend struct page_recv_t;
   public:
     /** Append a redo log snippet for the page
     @param recs log snippet */
@@ -185,10 +189,6 @@ struct page_recv_t
       tail= recs;
     }
 
-    /** Trim old log records for a page
-    @param start_lsn oldest log sequence number to preserve
-    @return whether the entire log was trimmed */
-    inline bool trim(lsn_t start_lsn);
     /** @return the last log snippet */
     const log_rec_t* last() const { return tail; }
 
@@ -207,6 +207,10 @@ struct page_recv_t
     inline void clear();
   } log;
 
+  /** Trim old log records for a page
+  @param start_lsn oldest log sequence number to preserve
+  @return whether the entire log was trimmed */
+  inline bool trim(lsn_t start_lsn);
   /** Ignore any earlier redo log records for this page. */
   inline void will_not_read();
   /** @return whether the log records for the page are being processed */

@@ -378,6 +378,9 @@ void mtr_t::start()
   ut_d(m_start= true);
   ut_d(m_commit= false);
 
+  m_last= nullptr;
+  m_last_offset= 0;
+
   new(&m_memo) mtr_buf_t();
   new(&m_log) mtr_buf_t();
 

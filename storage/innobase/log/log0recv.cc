@@ -159,9 +159,10 @@ struct log_phys_t : public log_rec_t
   };
 
   /** Apply log to a page frame.
-  @param block     buffer block
+  @param[in,out] block         buffer block
+  @param[in,out] last_offset   last byte offset, for same_page records
   @return whether any log was applied to the page */
-  apply_status apply(const buf_block_t &block) const
+  apply_status apply(const buf_block_t &block, uint16_t &last_offset) const
   {
     const byte * const recs= static_cast<const byte*>
       (reinterpret_cast<const void*>(this + 1));
@@ -200,31 +201,36 @@ struct log_phys_t : public log_rec_t
         ut_ad(mlog_decode_varint(l) == block.page.id.page_no());
         l+= idlen;
         rlen-= idlen;
+        last_offset= 0;
       }
 
       switch (b & 0x70) {
+      case FREE_PAGE:
+        ut_ad(last_offset == 0);
+        goto next_not_same_page;
       case INIT_PAGE:
         if (UNIV_LIKELY(rlen == 0))
         {
           memset_aligned<UNIV_ZIP_SIZE_MIN>(frame, 0, size);
           mach_write_to_4(frame + FIL_PAGE_OFFSET, block.page.id.page_no());
           mach_write_to_4(frame + FIL_PAGE_SPACE_ID, block.page.id.space());
-next_after_applying:
+	  last_offset= FIL_PAGE_TYPE;
+      next_after_applying:
           if (applied == APPLIED_NO)
             applied= APPLIED_YES;
         }
         else
         {
-corrupted_or_next:
+      record_corrupted:
           if (!srv_force_recovery)
           {
             recv_sys.found_corrupt_log= true;
             return applied;
           }
+      next_not_same_page:
+          last_offset= 1; /* the next record must not be same_page  */
         }
-        /* fall through */
-      case FREE_PAGE:
-next:
+      next:
         l+= rlen;
         continue;
       }
@@ -233,6 +239,8 @@ next:
             block.page.id.page_no());
       ut_ad(mach_read_from_4(frame + FIL_PAGE_SPACE_ID) ==
             block.page.id.space());
+      ut_ad(last_offset <= 1 || last_offset > 8);
+      ut_ad(last_offset <= size);
 
       switch (b & 0x70) {
       case OPTION:
@@ -241,74 +249,83 @@ next:
         if (UNIV_UNLIKELY(block.page.id.page_no() < 3 ||
                           block.page.zip.ssize) &&
             !srv_force_recovery)
-          goto corrupted_or_next;
+          goto record_corrupted;
         if (UNIV_UNLIKELY(rlen != 1 || *l > 1))
-          goto corrupted_or_next;
+          goto record_corrupted;
         page_create_low(&block, *l != 0);
+        last_offset= FIL_PAGE_TYPE;
         goto next_after_applying;
       case WRITE:
       case MEMSET:
       case MEMMOVE:
+        if (UNIV_UNLIKELY(last_offset == 1))
+          goto record_corrupted;
         const size_t olen= mlog_decode_varint_length(*l);
         if (UNIV_UNLIKELY(olen >= rlen) || UNIV_UNLIKELY(olen > 3))
-          goto corrupted_or_next;
+          goto record_corrupted;
         const uint32_t offset= mlog_decode_varint(l);
         ut_ad(offset != MLOG_DECODE_ERROR);
         static_assert(FIL_PAGE_OFFSET == 4, "compatibility");
-        if (UNIV_UNLIKELY(offset < 8 || offset >= size))
-          goto corrupted_or_next;
+        if (UNIV_UNLIKELY(offset >= size))
+          goto record_corrupted;
+        if (UNIV_UNLIKELY(offset + last_offset < 8 ||
+                          offset + last_offset >= size))
+          goto record_corrupted;
+        last_offset+= static_cast<uint16_t>(offset);
         l+= olen;
         rlen-= olen;
         size_t llen= rlen;
         if ((b & 0x70) == WRITE)
         {
-          if (UNIV_UNLIKELY(rlen + offset > size))
-            goto corrupted_or_next;
-          memcpy(frame + offset, l, llen);
+          if (UNIV_UNLIKELY(rlen + last_offset > size))
+            goto record_corrupted;
+          memcpy(frame + last_offset, l, llen);
           if (UNIV_LIKELY(block.page.id.page_no()));
           else if (llen == 11 + MY_AES_BLOCK_SIZE &&
-                   offset == FSP_HEADER_OFFSET + MAGIC_SZ +
+                   last_offset == FSP_HEADER_OFFSET + MAGIC_SZ +
                    fsp_header_get_encryption_offset(block.zip_size()))
             applied= APPLIED_TO_ENCRYPTION;
-          else if (offset < FSP_HEADER_OFFSET + FSP_FREE + FLST_LEN + 4 &&
-                   offset + llen >= FSP_HEADER_OFFSET + FSP_SIZE)
+          else if (last_offset < FSP_HEADER_OFFSET + FSP_FREE + FLST_LEN + 4 &&
+                   last_offset + llen >= FSP_HEADER_OFFSET + FSP_SIZE)
             applied= APPLIED_TO_FSP_HEADER;
+        next_after_applying_write:
+          ut_ad(llen + last_offset <= size);
+          last_offset+= static_cast<uint16_t>(llen);
           goto next_after_applying;
         }
         llen= mlog_decode_varint_length(*l);
-        if (UNIV_UNLIKELY(llen > rlen) || UNIV_UNLIKELY(llen > 3))
-          goto corrupted_or_next;
+        if (UNIV_UNLIKELY(llen > rlen || llen > 3))
+          goto record_corrupted;
         const uint32_t len= mlog_decode_varint(l);
         ut_ad(len != MLOG_DECODE_ERROR);
-        if (UNIV_UNLIKELY(offset + len > size))
-          goto corrupted_or_next;
+        if (UNIV_UNLIKELY(len + last_offset > size))
+          goto record_corrupted;
         l+= llen;
         rlen-= llen;
         llen= len;
         if ((b & 0x70) == MEMSET)
         {
-          if (UNIV_LIKELY(rlen == 1))
-            memset(frame + offset, *l, llen);
-          else
-            goto corrupted_or_next; /* FIXME: support multi-byte! */
-          goto next_after_applying;
+          if (UNIV_UNLIKELY(rlen != 1))
+            goto record_corrupted; /* FIXME: support multi-byte! */
+          memset(frame + last_offset, *l, llen);
+          goto next_after_applying_write;
         }
         const size_t slen= mlog_decode_varint_length(*l);
-        if (UNIV_UNLIKELY(slen != rlen) || UNIV_UNLIKELY(slen > 3))
-          goto corrupted_or_next;
+        if (UNIV_UNLIKELY(slen != rlen || slen > 3))
+          goto record_corrupted;
         uint32_t s= mlog_decode_varint(l);
         ut_ad(slen != MLOG_DECODE_ERROR);
         if (s & 1)
-          s= offset - (s >> 1) - 1;
+          s= last_offset - (s >> 1) - 1;
         else
-          s= offset + (s >> 1) + 1;
+          s= last_offset + (s >> 1) + 1;
         if (UNIV_LIKELY(s >= 8 && s + llen <= size))
         {
-          memmove(frame + offset, frame + s, llen);
-          goto next_after_applying;
+          memmove(frame + last_offset, frame + s, llen);
+          goto next_after_applying_write;
         }
       }
-      goto corrupted_or_next;
+      goto record_corrupted;
     }
   }
 };
@@ -494,7 +511,7 @@ inline void recv_sys_t::trim(const page_id_t page_id, lsn_t lsn)
 	for (recv_sys_t::map::iterator p = pages.lower_bound(page_id);
 	     p != pages.end() && p->first.space() == page_id.space();) {
 		recv_sys_t::map::iterator r = p++;
-		if (r->second.log.trim(lsn)) {
+		if (r->second.trim(lsn)) {
 			pages.erase(r);
 		}
 	}
@@ -1313,12 +1330,13 @@ recv_calc_lsn_on_data_add(
 /** Trim old log records for a page
 @param start_lsn oldest log sequence number to preserve
 @return whether the entire log was trimmed */
-inline bool page_recv_t::recs_t::trim(lsn_t start_lsn)
+inline bool page_recv_t::trim(lsn_t start_lsn)
 {
-  for (log_rec_t** prev= &head;;)
+  for (log_rec_t** prev= &log.head;;)
   {
     if (!*prev) return true;
     if ((*prev)->lsn >= start_lsn) return false;
+    last_offset= 1; /* the next record must not be same_page */
     log_rec_t *next= (*prev)->next;
 #if 0 /* MDEV-21351 FIXME: allocate and deallocate each member individually */
     UT_DELETE(*prev);
@@ -1375,9 +1393,8 @@ inline void recv_sys_t::add(const page_id_t page_id,
                                                   (page_id, page_recv_t()));
   page_recv_t& recs= p.first->second;
   ut_ad(p.second == recs.log.empty());
-  ut_ad(!(*l & 0x80));
 
-  switch (*l & 0xf0) {
+  switch (*l & 0x70) {
   case FREE_PAGE: case INIT_PAGE:
     recs.will_not_read();
     mlog_init.add(page_id, lsn); /* MDEV-12353 FIXME: remove this! */
@@ -1387,6 +1404,7 @@ inline void recv_sys_t::add(const page_id_t page_id,
     recs.log.append(new (mem_heap_alloc(heap, sizeof(log_phys_t) + len + 1))
                     log_phys_t(start_lsn, lsn, l, len));
 #else
+    /* MDEV-12353 FIXME: merge adjacent requests */
     recs.log.append(UT_NEW_NOKEY(log_phys_t(start_lsn, lsn, l)));
 #endif
   }
@@ -1473,7 +1491,7 @@ eom_found:
   ut_d(std::set<page_id_t> modified);
 #endif
 
-  uint32_t space_id= 0, page_no= 0;
+  uint32_t space_id= 0, page_no= 0, last_offset= 0;
 #if 1 /* MDEV-14425 FIXME: remove this */
   bool got_page_op= false;
 #endif
@@ -1499,9 +1517,9 @@ eom_found:
     }
     ut_ad(l + rlen < end);
     size_t idlen;
-    ut_ad(!(b & 0x80) || !got_page_op); // MDEV-12353 FIXME: write same_page!
     if ((b & 0x80) && got_page_op)
     {
+      /* This record is for the same page as the previous one. */
       if (UNIV_UNLIKELY((b & 0x70) <= INIT_PAGE))
       {
 record_corrupted:
@@ -1509,10 +1527,12 @@ record_corrupted:
         if (!srv_force_recovery)
           goto malformed;
         ib::warn() << "Ignoring malformed log record at LSN " << recovered_lsn;
+        last_offset= 1; /* the next record must not be same_page  */
         continue;
       }
       goto same_page;
     }
+    last_offset= 0;
     idlen= mlog_decode_varint_length(*l);
     if (UNIV_UNLIKELY(idlen > 5 || idlen >= rlen))
     {
@@ -1540,8 +1560,8 @@ page_id_corrupted:
       goto page_id_corrupted;
     l+= idlen;
     rlen-= idlen;
-    got_page_op= !(b & 0x80);
-    if (!got_page_op || !apply || is_predefined_tablespace(space_id) ||
+    got_page_op = !(b & 0x80);
+    if ((b & 0x80) || !apply || is_predefined_tablespace(space_id) ||
         recv_spaces.find(space_id) != recv_spaces.end());
     else if (recovered_lsn < mlog_checkpoint_lsn)
       /* We have not seen all records between the checkpoint and
@@ -1567,7 +1587,7 @@ same_page:
                 recovered_lsn, b, static_cast<size_t>(l + rlen - recs),
                 space_id, page_no));
 
-    if (!(b & 0x80)) /* not same_page flag */
+    if (got_page_op)
     {
       ut_d(const page_id_t id(space_id, page_no));
       ut_d(if ((b & 0x70) == INIT_PAGE) freed.erase(id));
@@ -1575,39 +1595,54 @@ same_page:
       switch (b & 0x70) {
       case FREE_PAGE:
         ut_ad(freed.emplace(id).second);
-        /* fall through */
+        last_offset= 1; /* the next record must not be same_page  */
+        goto free_or_init_page;
       case INIT_PAGE:
-        if (rlen != 0)
+      free_or_init_page:
+        last_offset= FIL_PAGE_TYPE;
+        if (UNIV_UNLIKELY(rlen != 0))
           goto record_corrupted;
 #if 0 /* MDEV-12353 FIXME: enable this and remove mlog_init! */
         ut_ad(modified.find(id) == modified.end());
 #endif
         break;
       case INIT_INDEX_PAGE:
-        if (rlen != 1)
+        if (UNIV_UNLIKELY(rlen != 1))
           goto record_corrupted;
+        last_offset= FIL_PAGE_TYPE;
         break;
+      case RESERVED:
+      case OPTION:
+        continue;
       case WRITE:
-        if (rlen == 0)
+      case MEMMOVE:
+      case MEMSET:
+        if (UNIV_UNLIKELY(rlen == 0 || last_offset == 1))
           goto record_corrupted;
-        if (UNIV_UNLIKELY(page_no == 0) && apply)
+        const size_t olen= mlog_decode_varint_length(*l);
+        if (UNIV_UNLIKELY(olen >= rlen) || UNIV_UNLIKELY(olen > 3))
+          goto record_corrupted;
+        const uint32_t offset= mlog_decode_varint(l);
+        ut_ad(offset != MLOG_DECODE_ERROR);
+        static_assert(FIL_PAGE_OFFSET == 4, "compatibility");
+        if (UNIV_UNLIKELY(offset >= srv_page_size))
+          goto record_corrupted;
+        last_offset+= offset;
+        if (UNIV_UNLIKELY(last_offset < 8 || last_offset >= srv_page_size))
+          goto record_corrupted;
+        l+= olen;
+        rlen-= olen;
+        if ((b & 0x70) == WRITE)
         {
-          const size_t olen= mlog_decode_varint_length(*l);
-          if (UNIV_UNLIKELY(olen >= rlen) || UNIV_UNLIKELY(olen > 3))
+          if (UNIV_UNLIKELY(rlen + last_offset > srv_page_size))
             goto record_corrupted;
-          const uint32_t offset= mlog_decode_varint(l);
-          ut_ad(offset != MLOG_DECODE_ERROR);
-          static_assert(FIL_PAGE_OFFSET == 4, "compatibility");
-          if (UNIV_UNLIKELY(offset < 8 || offset >= srv_page_size))
-            goto record_corrupted;
-          l+= olen;
-          rlen-= olen;
-          if (offset <= FSP_HEADER_OFFSET + FSP_SIZE &&
-              offset + rlen >= FSP_HEADER_OFFSET + FSP_SIZE + 4)
+          if (UNIV_UNLIKELY(page_no == 0) && apply &&
+              last_offset <= FSP_HEADER_OFFSET + FSP_SIZE &&
+              last_offset + rlen >= FSP_HEADER_OFFSET + FSP_SIZE + 4)
           {
             recv_spaces_t::iterator it= recv_spaces.find(space_id);
             const uint32_t size= mach_read_from_4(FSP_HEADER_OFFSET + FSP_SIZE
-                                                  + l - offset);
+                                                  + l - last_offset);
             if (it == recv_spaces.end())
               ut_ad(!mlog_checkpoint_lsn || space_id == TRX_SYS_SPACE ||
                     srv_is_undo_tablespace(space_id));
@@ -1615,21 +1650,43 @@ same_page:
               it->second.size= size;
             fil_space_set_recv_size(space_id, size);
           }
+          last_offset+= rlen;
+	  break;
         }
-        break;
-      case MEMMOVE:
-      case MEMSET:
-        if (rlen < 2)
+	size_t llen= mlog_decode_varint_length(*l);
+        if (UNIV_UNLIKELY(llen > rlen || llen > 3))
           goto record_corrupted;
+        const uint32_t len= mlog_decode_varint(l);
+        ut_ad(len != MLOG_DECODE_ERROR);
+        if (UNIV_UNLIKELY(last_offset + len > srv_page_size))
+          goto record_corrupted;
+        l+= llen;
+        rlen-= llen;
+        llen= len;
+        if ((b & 0x70) == MEMSET)
+        {
+          if (UNIV_UNLIKELY(rlen != 1))
+            goto record_corrupted; /* FIXME: support multi-byte! */
+	  last_offset+= llen;
+	  break;
+        }
+        const size_t slen= mlog_decode_varint_length(*l);
+        if (UNIV_UNLIKELY(slen != rlen || slen > 3))
+          goto record_corrupted;
+        uint32_t s= mlog_decode_varint(l);
+        ut_ad(slen != MLOG_DECODE_ERROR);
+        if (s & 1)
+          s= last_offset - (s >> 1) - 1;
+        else
+          s= last_offset + (s >> 1) + 1;
+        if (UNIV_UNLIKELY(s < 8 || s + llen > srv_page_size))
+          goto record_corrupted;
+	last_offset+= llen;
         break;
-      case RESERVED:
-      case OPTION:
-        continue;
       }
 #if 0 /* MDEV-12353 FIXME: enable this and remove mlog_init! */
       ut_d(modified.emplace(id));
 #endif
-#if 1 // TODO: same_page: add() only once for multiple consecutive records
       switch (store) {
       case STORE_NO:
         continue;
@@ -1641,12 +1698,6 @@ same_page:
         add(page_id_t(space_id, page_no), start_lsn, recovered_lsn, recs,
             static_cast<size_t>(l + rlen - recs));
       }
-#endif
-    }
-    else if (got_page_op)
-    {
-      /* same_page, the record is to be included in the add() above */
-      ut_error; /* MDEV-12353 FIXME: do write&parse same_page records! */
     }
 #if 1 /* MDEV-14425 FIXME: this must be in the checkpoint file only! */
     else if (rlen)
@@ -1866,7 +1917,8 @@ static void recv_recover_page(buf_block_t* block, mtr_t& mtr,
 		DBUG_LOG("ib_log", "apply " << l->start_lsn << ": "
 			 << block->page.id);
 
-		log_phys_t::apply_status a= l->apply(*block);
+		log_phys_t::apply_status a= l->apply(*block,
+						     p->second.last_offset);
 
 		switch (a) {
 		case log_phys_t::APPLIED_NO:
