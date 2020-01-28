@@ -91,12 +91,10 @@ if (`SELECT @@global.log_bin`)
   # Recording proper samples of binlogged prepared XA:s
   --source include/show_binlog_events.inc
   --exec $MYSQL_BINLOG -R --to-last-log master-bin.000001 > $outfile
-  # --cat_file $outfile
 }
 
 --echo All transactions must be completed, to empty-list the following:
 XA RECOVER;
-
 
 if (`SELECT @@global.log_bin`)
 {

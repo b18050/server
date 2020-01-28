@@ -3121,8 +3121,8 @@ protected:
     s_tx_list.erase(this);
     RDB_MUTEX_UNLOCK_CHECK(s_tx_list_mutex);
   }
-  virtual bool is_prepared() { return false; };
-  virtual void detach_prepared_tx()             {};
+  virtual bool is_prepared()        { return false; };
+  virtual void detach_prepared_tx() {};
 };
 
 /*
@@ -3163,22 +3163,9 @@ class Rdb_transaction_impl : public Rdb_transaction {
     return m_rocksdb_tx && rocksdb::Transaction::PREPARED == m_rocksdb_tx->GetState();
   }
 
-  void reset_reuse_tx(void **ptr_store) {
-    DBUG_ASSERT(ptr_store);
-    if (ptr_store)
-      *ptr_store = m_rocksdb_reuse_tx;
-    m_rocksdb_reuse_tx = nullptr;
-  }
-
   void detach_prepared_tx() {
     DBUG_ASSERT(rocksdb::Transaction::PREPARED == m_rocksdb_tx->GetState());
     m_rocksdb_tx = nullptr;
-  }
-
-  virtual void attach_tx_for_reuse(rocksdb::Transaction *tx) {
-    m_rocksdb_reuse_tx = tx;
-    m_rocksdb_tx = nullptr; // todo: assert PREPARED state
-
   }
 
 private:
@@ -3823,16 +3810,11 @@ static int rocksdb_close_connection(handlerton *const hton, THD *const thd) {
           rc);
     }
     if (tx->is_prepared())
-      tx->detach_prepared_tx(); // TODO: restore backup then
-//    else if (*thd_ha_data_backup(thd, hton)) {
-//      DBUG_ASSERT(1 /* XA started */);
-      // TODO: restore backup for anything to do with it in delete
-    //}
+      tx->detach_prepared_tx();
     delete tx;
   }
   return HA_EXIT_SUCCESS;
 }
-
 
 /*
  * Serializes an xid to a string so that it can

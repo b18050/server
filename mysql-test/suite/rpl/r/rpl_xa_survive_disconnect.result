@@ -60,7 +60,7 @@ master-bin.000001	#	Query	#	#	use `test`; INSERT INTO d1.t VALUES (2)
 master-bin.000001	#	Query	#	#	XA END X'32',X'',1
 master-bin.000001	#	XA_prepare	#	#	XA PREPARE X'32',X'',1
 master-bin.000001	#	Gtid	#	#	GTID #-#-#
-master-bin.000001	#	Query	#	#	XA COMMIT '2'
+master-bin.000001	#	Query	#	#	XA COMMIT X'32',X'',1
 master-bin.000001	#	Gtid	#	#	GTID #-#-#
 master-bin.000001	#	Query	#	#	XA COMMIT X'312d726f77',X'',1
 master-bin.000001	#	Gtid	#	#	GTID #-#-#
