@@ -827,6 +827,10 @@ public:
   }
   virtual double val_real(void)=0;
   virtual longlong val_int(void)=0;
+  virtual longlong val_int(decimal_round_mode round_type)
+  {
+    return val_int();
+  }
   /*
     Get ulonglong representation.
     Negative values are truncated to 0.
@@ -1998,6 +2002,7 @@ public:
   int  store_decimal(const my_decimal *);
   double val_real(void);
   longlong val_int(void);
+  longlong val_int(decimal_round_mode round_type);
   ulonglong val_uint(void);
   my_decimal *val_decimal(my_decimal *);
   String *val_str(String*, String *);

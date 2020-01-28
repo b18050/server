@@ -2840,7 +2840,7 @@ bool partition_key_modified(TABLE *table, const MY_BITMAP *fields)
 
 static inline int part_val_int(Item *item_expr, longlong *result)
 {
-  *result= item_expr->val_int();
+  *result= item_expr->val_int(FLOOR);
   if (item_expr->null_value)
   {
     if (unlikely(current_thd->is_error()))

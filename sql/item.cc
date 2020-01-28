@@ -3433,6 +3433,15 @@ longlong Item_field::val_int()
 }
 
 
+longlong Item_field::val_int(decimal_round_mode round_type)
+{
+  DBUG_ASSERT(fixed == 1);
+  if ((null_value=field->is_null()))
+    return 0;
+  return field->val_int(round_type);
+}
+
+
 my_decimal *Item_field::val_decimal(my_decimal *decimal_value)
 {
   if ((null_value= field->is_null()))

@@ -1009,3 +1009,16 @@ select * from t1 partition (p1);
 d
 2000-01-01 00:00:01.000000
 DROP TABLE t1, t2;
+#
+# MDEV-21195 INSERT chooses wrong partition for RANGE partitioning by DECIMAL column
+#
+create or replace table t (d decimal(2,1)) partition by range (d) (partition p1 values less than (10), partition p2 values less than (20));
+insert into t values (9.9);
+select * from t partition (p1);
+d
+9.9
+select * from t partition (p2);
+d
+create or replace table t (d decimal(2,1)) partition by range (d) (partition p1 values less than (10));
+insert into t values (9.9);
+drop table t;

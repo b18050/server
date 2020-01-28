@@ -1028,6 +1028,10 @@ public:
       If value is not null null_value flag will be reset to FALSE.
   */
   virtual longlong val_int()=0;
+  virtual longlong val_int(decimal_round_mode round_type)
+  {
+    return val_int();
+  }
   Longlong_hybrid to_longlong_hybrid()
   {
     return Longlong_hybrid(val_int(), unsigned_flag);
@@ -2993,6 +2997,7 @@ public:
   bool eq(const Item *item, bool binary_cmp) const;
   double val_real();
   longlong val_int();
+  longlong val_int(decimal_round_mode round_type);
   my_decimal *val_decimal(my_decimal *);
   String *val_str(String*);
   void save_result(Field *to);

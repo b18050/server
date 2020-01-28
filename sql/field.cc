@@ -3415,6 +3415,17 @@ longlong Field_new_decimal::val_int(void)
 }
 
 
+longlong Field_new_decimal::val_int(decimal_round_mode round_type)
+{
+  ASSERT_COLUMN_MARKED_FOR_READ;
+  longlong i;
+  my_decimal decimal_value;
+  my_decimal2int(E_DEC_FATAL_ERROR, val_decimal(&decimal_value),
+                 unsigned_flag, &i, round_type);
+  return i;
+}
+
+
 ulonglong Field_new_decimal::val_uint(void)
 {
   ASSERT_COLUMN_MARKED_FOR_READ;
