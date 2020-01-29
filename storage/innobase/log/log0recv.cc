@@ -1432,7 +1432,7 @@ loop:
 
   /* Check that the entire mini-transaction is included within the buffer */
   const byte *l;
-  size_t rlen;
+  uint32_t rlen;
   for (l= log; l < end; l+= rlen)
   {
     if (!*l)
@@ -1508,7 +1508,7 @@ eom_found:
     ut_ad(rlen || l + 16 < end);
     if (!rlen)
     {
-      const size_t lenlen= mlog_decode_varint_length(*l);
+      const uint32_t lenlen= mlog_decode_varint_length(*l);
       ut_ad(l + lenlen < end);
       const uint32_t addlen= mlog_decode_varint(l);
       ut_ad(addlen != MLOG_DECODE_ERROR);
@@ -1516,7 +1516,7 @@ eom_found:
       l+= lenlen;
     }
     ut_ad(l + rlen < end);
-    size_t idlen;
+    uint32_t idlen;
     if ((b & 0x80) && got_page_op)
     {
       /* This record is for the same page as the previous one. */
@@ -1619,7 +1619,7 @@ same_page:
       case MEMSET:
         if (UNIV_UNLIKELY(rlen == 0 || last_offset == 1))
           goto record_corrupted;
-        const size_t olen= mlog_decode_varint_length(*l);
+        const uint32_t olen= mlog_decode_varint_length(*l);
         if (UNIV_UNLIKELY(olen >= rlen) || UNIV_UNLIKELY(olen > 3))
           goto record_corrupted;
         const uint32_t offset= mlog_decode_varint(l);
@@ -1651,9 +1651,9 @@ same_page:
             fil_space_set_recv_size(space_id, size);
           }
           last_offset+= rlen;
-	  break;
+          break;
         }
-	size_t llen= mlog_decode_varint_length(*l);
+        uint32_t llen= mlog_decode_varint_length(*l);
         if (UNIV_UNLIKELY(llen > rlen || llen > 3))
           goto record_corrupted;
         const uint32_t len= mlog_decode_varint(l);
@@ -1667,10 +1667,10 @@ same_page:
         {
           if (UNIV_UNLIKELY(rlen != 1))
             goto record_corrupted; /* FIXME: support multi-byte! */
-	  last_offset+= llen;
-	  break;
+          last_offset+= llen;
+          break;
         }
-        const size_t slen= mlog_decode_varint_length(*l);
+        const uint32_t slen= mlog_decode_varint_length(*l);
         if (UNIV_UNLIKELY(slen != rlen || slen > 3))
           goto record_corrupted;
         uint32_t s= mlog_decode_varint(l);
@@ -1681,7 +1681,7 @@ same_page:
           s= last_offset + (s >> 1) + 1;
         if (UNIV_UNLIKELY(s < 8 || s + llen > srv_page_size))
           goto record_corrupted;
-	last_offset+= llen;
+        last_offset+= llen;
         break;
       }
 #if 0 /* MDEV-12353 FIXME: enable this and remove mlog_init! */
